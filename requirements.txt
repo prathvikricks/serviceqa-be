@@ -1,0 +1,38 @@
+# --- Web framework ---
+Flask==3.0.3
+Flask-SQLAlchemy==3.1.1
+Flask-Login==0.6.3
+Flask-Migrate==4.0.7
+Flask-WTF==1.2.1
+Flask-Cors==4.0.1
+Flask-Limiter==3.8.0
+SQLAlchemy==2.0.35
+alembic==1.13.3
+Werkzeug==3.0.4
+
+# --- Scheduling (start/stop jobs) ---
+APScheduler==3.10.4
+
+# --- Credentials at rest ---
+cryptography==43.0.1
+
+# --- Cloud providers (only used when a project is in 'real' mode) ---
+boto3==1.35.36
+azure-identity==1.18.0
+azure-mgmt-compute==33.0.0
+azure-mgmt-web==7.3.1
+azure-mgmt-sql==3.0.1
+azure-mgmt-containerservice==31.0.0
+azure-mgmt-resource==23.1.1
+azure-mgmt-rdbms==10.1.0
+
+# --- Database + serving ---
+psycopg2-binary==2.9.9
+gunicorn==23.0.0
+
+# --- Tests ---
+pytest==8.3.3
+
+# Zoneinfo database — python:slim ships none, so TZ=Asia/Kolkata would
+# silently resolve to UTC without this.
+tzdata==2024.2
