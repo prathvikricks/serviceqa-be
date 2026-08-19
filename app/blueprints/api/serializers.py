@@ -79,13 +79,24 @@ def service_dict(svc):
 
 
 def request_dict(req, detail=False):
+    env = req.environment
+    project = req.project
     data = {
         'id': req.id,
         'requester': req.requester.username,
         'requester_id': req.requester_id,
+        'request_type': req.request_type,
         'environment_id': req.environment_id,
-        'environment': req.environment.display_name,
-        'project': req.environment.project.name,
+        'environment': env.display_name if env else None,
+        'project': project.name if project else None,
+        'project_id': req.project_id,
+        # Repo-request fields (null for service requests).
+        'repo_name': req.repo_name,
+        'repo_description': req.repo_description,
+        'repo_visibility': req.repo_visibility,
+        'git_provider': req.git_provider,
+        'repo_url': req.repo_url,
+        'git_error': req.git_error,
         'action_type': req.action_type,
         'start_time': _dt(req.start_time),
         'end_time': _dt(req.end_time),

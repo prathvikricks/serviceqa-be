@@ -9,11 +9,45 @@ schedule flow is clickable immediately, in mock mode, with no cloud account.
 """
 import sys
 
+from sqlalchemy import text
+
 from app import create_app
 from app.extensions import db
 from app.models.user import Role, User
 from app.models.project import Project
 from app.models.environment import Environment, CloudService
+
+
+# New columns added to environment_requests after the table already shipped.
+# create_all() only creates missing *tables*, never missing columns, and this
+# app has no Alembic history — so we patch the live schema idempotently. Postgres
+# only; on SQLite a fresh create_all() already has the current schema.
+_REQUEST_COLUMN_DDL = [
+    "ALTER TABLE environment_requests ADD COLUMN IF NOT EXISTS "
+    "request_type VARCHAR(20) NOT NULL DEFAULT 'service'",
+    "ALTER TABLE environment_requests ALTER COLUMN environment_id DROP NOT NULL",
+    "ALTER TABLE environment_requests ALTER COLUMN start_time DROP NOT NULL",
+    "ALTER TABLE environment_requests ALTER COLUMN end_time DROP NOT NULL",
+    "ALTER TABLE environment_requests ADD COLUMN IF NOT EXISTS "
+    "project_id INTEGER REFERENCES projects(id)",
+    "ALTER TABLE environment_requests ADD COLUMN IF NOT EXISTS repo_name VARCHAR(120)",
+    "ALTER TABLE environment_requests ADD COLUMN IF NOT EXISTS repo_description TEXT",
+    "ALTER TABLE environment_requests ADD COLUMN IF NOT EXISTS repo_visibility VARCHAR(10)",
+    "ALTER TABLE environment_requests ADD COLUMN IF NOT EXISTS git_provider VARCHAR(20)",
+    "ALTER TABLE environment_requests ADD COLUMN IF NOT EXISTS repo_url VARCHAR(500)",
+    "ALTER TABLE environment_requests ADD COLUMN IF NOT EXISTS git_error TEXT",
+]
+
+
+def ensure_request_columns():
+    """Idempotently add the repo-request columns to an existing table (Postgres)."""
+    if db.engine.dialect.name != 'postgresql':
+        print('  schema: non-postgres, create_all() owns the schema — skipping patch')
+        return
+    with db.engine.begin() as conn:
+        for stmt in _REQUEST_COLUMN_DDL:
+            conn.execute(text(stmt))
+    print('  schema: environment_requests repo columns ensured')
 
 
 def seed_roles():
@@ -86,6 +120,7 @@ def main():
     with app.app_context():
         db.create_all()
         print('==> Seeding')
+        ensure_request_columns()
         seed_roles()
         seed_admin(app)
         if '--demo' in sys.argv:

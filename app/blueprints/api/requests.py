@@ -64,10 +64,76 @@ def list_requests():
     })
 
 
+_REPO_NAME_RE = re.compile(r'^[A-Za-z0-9._-]{1,120}$')
+
+
+@api_bp.route('/git/providers')
+@login_required
+def git_providers():
+    """Which Git providers the backend can create repos on (token configured)."""
+    from ...services.git_manager import configured_providers
+    return jsonify({'providers': configured_providers()})
+
+
+def _create_repo_request(data):
+    """Create a pending 'repo' request. The provider is chosen by the approver."""
+    from ...models.project import Project
+
+    repo_name = (data.get('repo_name') or '').strip()
+    description = (data.get('repo_description') or '').strip()
+    visibility = (data.get('repo_visibility') or 'private').strip().lower()
+    project_id = data.get('project_id')
+    reason = (data.get('reason') or '').strip()
+
+    if not _REPO_NAME_RE.match(repo_name):
+        return jsonify({'error': 'Repository name may only contain letters, '
+                                 'numbers, dot, dash and underscore.'}), 400
+    if visibility not in ('private', 'public'):
+        return jsonify({'error': 'Visibility must be private or public.'}), 400
+
+    project = None
+    if project_id:
+        project = db.session.get(Project, project_id)
+        if not project:
+            return jsonify({'error': 'Linked project not found.'}), 400
+
+    # reason is NOT NULL on the shared table — fall back to the description
+    # or the repo name so the repo form doesn't have to duplicate the field.
+    reason = reason or description or f'Create repository {repo_name}'
+
+    repo_request = EnvironmentRequest(
+        requester_id=current_user.id,
+        request_type='repo',
+        action_type='create_repo',
+        status='pending',
+        reason=reason,
+        project_id=project.id if project else None,
+        repo_name=repo_name,
+        repo_description=description or None,
+        repo_visibility=visibility,
+    )
+    db.session.add(repo_request)
+    db.session.commit()
+
+    AuditLog.log('request_created', 'request', repo_request.id,
+                 user_id=current_user.id, ip_address=request.remote_addr,
+                 details={
+                     'type': 'repo',
+                     'repo_name': repo_name,
+                     'visibility': visibility,
+                     'project': project.name if project else None,
+                 })
+
+    return jsonify(request_dict(repo_request, detail=True)), 201
+
+
 @api_bp.route('/requests', methods=['POST'])
 @login_required
 def create_request():
     data = request.get_json(silent=True) or {}
+
+    if (data.get('request_type') or 'service') == 'repo':
+        return _create_repo_request(data)
 
     environment_id = data.get('environment_id')
     action_type = data.get('action_type', 'start_stop')
@@ -172,9 +238,11 @@ def create_request():
 def request_detail(request_id):
     env_request = _get_or_404(EnvironmentRequest, request_id)
 
-    # Access check (mirrors HTML route)
+    # Access check (mirrors HTML route). Repo requests have no environment, so
+    # fall back to their linked project (if any).
     if current_user.is_developer and env_request.requester_id != current_user.id:
-        if not current_user.is_member_of(env_request.environment.project_id):
+        proj = env_request.project
+        if not proj or not current_user.is_member_of(proj.id):
             return jsonify({'error': 'Access denied'}), 403
 
     data = request_dict(env_request, detail=True)

@@ -15,17 +15,35 @@ class EnvironmentRequest(db.Model):
         ('stop_start', 'Stop → Start'),    # Stop services at start_time, start at end_time
     ]
 
+    # 'service' = the classic environment start/stop request (needs an
+    # environment + time window). 'repo' = a Git repository creation request,
+    # fulfilled by the approver choosing a provider (github/gitlab) at approval
+    # time — no environment, no schedule.
+    REQUEST_TYPES = ['service', 'repo']
+
     id = db.Column(db.Integer, primary_key=True)
     requester_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    environment_id = db.Column(db.Integer, db.ForeignKey('environments.id'), nullable=False)
+    # Discriminator. Repo requests leave environment_id/start_time/end_time null.
+    request_type = db.Column(db.String(20), default='service', nullable=False)
+    environment_id = db.Column(db.Integer, db.ForeignKey('environments.id'), nullable=True)
     action_type = db.Column(db.String(20), default='start_stop', nullable=False)
     # For a one-time request start_time/end_time is the exact window. For a
     # weekly request they hold the NEXT upcoming occurrence (refreshed each cycle)
     # so duration/cost/list displays keep working; the recurrence is driven by
-    # recurrence_days + start_hm/stop_hm below.
-    start_time = db.Column(db.DateTime, nullable=False)
-    end_time = db.Column(db.DateTime, nullable=False)
+    # recurrence_days + start_hm/stop_hm below. Null for repo requests.
+    start_time = db.Column(db.DateTime, nullable=True)
+    end_time = db.Column(db.DateTime, nullable=True)
     reason = db.Column(db.Text, nullable=False)
+
+    # --- Repo-creation request fields (request_type == 'repo') ---
+    # The project/team this repo belongs to (independent of environments).
+    project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=True)
+    repo_name = db.Column(db.String(120), nullable=True)
+    repo_description = db.Column(db.Text, nullable=True)
+    repo_visibility = db.Column(db.String(10), nullable=True)   # 'private' | 'public'
+    git_provider = db.Column(db.String(20), nullable=True)      # chosen by approver: 'github' | 'gitlab'
+    repo_url = db.Column(db.String(500), nullable=True)         # populated once created
+    git_error = db.Column(db.Text, nullable=True)              # last creation failure, if any
     # Recurrence: 'once' (default, one-shot) or 'weekly' (repeat on chosen
     # weekdays at a daily time window until recur_until, or forever if null).
     schedule_type = db.Column(db.String(20), default='once', nullable=False)
@@ -42,6 +60,10 @@ class EnvironmentRequest(db.Model):
                            onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationships
+    # Named repo_project (not 'project') so it doesn't shadow the `project`
+    # property below, which resolves to the environment's project for service
+    # requests and this link for repo requests.
+    repo_project = db.relationship('Project', foreign_keys=[project_id])
     services = db.relationship('RequestService', backref='request', lazy='dynamic',
                                cascade='all, delete-orphan')
     approval = db.relationship('Approval', backref='request', uselist=False)
@@ -54,6 +76,10 @@ class EnvironmentRequest(db.Model):
     WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
     _WEEKDAY_LABEL = {'mon': 'Mon', 'tue': 'Tue', 'wed': 'Wed', 'thu': 'Thu',
                       'fri': 'Fri', 'sat': 'Sat', 'sun': 'Sun'}
+
+    @property
+    def is_repo(self):
+        return self.request_type == 'repo'
 
     @property
     def is_recurring(self):
@@ -88,6 +114,8 @@ class EnvironmentRequest(db.Model):
 
     @property
     def action_label(self):
+        if self.is_repo:
+            return 'Create Repo'
         return 'Stop → Start' if self.is_inverse else 'Start → Stop'
 
     @property
@@ -100,6 +128,8 @@ class EnvironmentRequest(db.Model):
 
     @property
     def duration_hours(self):
+        if not self.start_time or not self.end_time:
+            return None
         delta = self.end_time - self.start_time
         return round(delta.total_seconds() / 3600, 1)
 
@@ -110,7 +140,11 @@ class EnvironmentRequest(db.Model):
 
     @property
     def project(self):
-        return self.environment.project
+        # Service requests inherit their project from the environment; repo
+        # requests carry a direct project link instead.
+        if self.environment is not None:
+            return self.environment.project
+        return self.repo_project
 
     def __repr__(self):
         return f'<EnvironmentRequest #{self.id} ({self.status})>'

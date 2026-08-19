@@ -39,17 +39,75 @@ def approvals_list():
     })
 
 
+def _approve_repo_request(env_request, comment):
+    """Fulfil a repo request: create the repo on the approver-chosen provider.
+
+    Retryable — a previous 'failed' attempt can be approved again with a
+    different provider. The Approval row is written once (on the first approve).
+    """
+    from ...services.git_manager import create_repo, configured_providers
+
+    data = request.get_json(silent=True) or {}
+    provider = (data.get('provider') or '').strip().lower()
+    available = configured_providers()
+    if provider not in available:
+        return jsonify({'error': f'Choose a configured Git provider ({", ".join(available) or "none configured"}).'}), 400
+
+    if env_request.approval is None:
+        db.session.add(Approval(
+            request_id=env_request.id,
+            approver_id=current_user.id,
+            decision='approved',
+            comment=comment if comment else None,
+        ))
+
+    try:
+        url = create_repo(
+            provider,
+            env_request.repo_name,
+            env_request.repo_description or '',
+            private=(env_request.repo_visibility != 'public'),
+        )
+        env_request.git_provider = provider
+        env_request.repo_url = url
+        env_request.git_error = None
+        env_request.status = 'completed'
+        ok = True
+    except Exception as e:
+        env_request.git_provider = provider
+        env_request.git_error = str(e)
+        env_request.status = 'failed'
+        ok = False
+
+    db.session.commit()
+
+    AuditLog.log('repo_created' if ok else 'repo_create_failed', 'request',
+                 env_request.id, user_id=current_user.id,
+                 ip_address=request.remote_addr,
+                 details={'provider': provider, 'repo_name': env_request.repo_name,
+                          'url': env_request.repo_url, 'error': env_request.git_error})
+
+    status_code = 200 if ok else 502
+    return jsonify(request_dict(env_request, detail=True)), status_code
+
+
 @api_bp.route('/approvals/<int:request_id>/approve', methods=['POST'])
 @login_required
 @devops_required
 def approve(request_id):
     env_request = _get_or_404(EnvironmentRequest, request_id)
 
-    if env_request.status != 'pending':
-        return jsonify({'error': 'This request is no longer pending'}), 400
-
     data = request.get_json(silent=True) or {}
     comment = (data.get('comment') or '').strip()
+
+    # Repo requests: pending → create now; a prior failed attempt can be retried.
+    if env_request.is_repo:
+        if env_request.status not in ('pending', 'failed'):
+            return jsonify({'error': 'This request is no longer actionable'}), 400
+        return _approve_repo_request(env_request, comment)
+
+    if env_request.status != 'pending':
+        return jsonify({'error': 'This request is no longer pending'}), 400
 
     approval = Approval(
         request_id=request_id,
