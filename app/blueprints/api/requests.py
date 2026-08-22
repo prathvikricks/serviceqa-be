@@ -67,6 +67,26 @@ def list_requests():
 _REPO_NAME_RE = re.compile(r'^[A-Za-z0-9._-]{1,120}$')
 
 
+def _linked_conversation_id(data, project_id):
+    """The chat conversation to record on this request, if it is legitimately ours.
+
+    Silently ignored rather than rejected when it does not check out: the link
+    is provenance, not authorization, and a stale id from a reloaded tab should
+    not block a valid request.
+    """
+    from ...models.chat import ChatConversation
+
+    conversation_id = data.get('conversation_id')
+    if not conversation_id:
+        return None
+    convo = db.session.get(ChatConversation, conversation_id)
+    if convo is None or convo.user_id != current_user.id:
+        return None
+    if project_id is not None and convo.project_id != project_id:
+        return None
+    return convo.id
+
+
 @api_bp.route('/git/providers')
 @login_required
 def git_providers():
@@ -111,6 +131,7 @@ def _create_repo_request(data):
         repo_name=repo_name,
         repo_description=description or None,
         repo_visibility=visibility,
+        conversation_id=_linked_conversation_id(data, project.id if project else None),
     )
     db.session.add(repo_request)
     db.session.commit()
@@ -206,6 +227,7 @@ def create_request():
         reason=reason,
         status='pending',
         estimated_cost=estimated_cost,
+        conversation_id=_linked_conversation_id(data, env.project_id),
     )
     db.session.add(env_request)
     db.session.flush()

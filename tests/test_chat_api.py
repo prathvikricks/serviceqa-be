@@ -139,3 +139,48 @@ def test_an_empty_message_is_rejected(client, project, users, enabled):
     resp = client.post(f'/api/v1/chat/conversations/{convo.id}/messages',
                        json={'content': '   '})
     assert resp.status_code == 400
+
+
+# --- provenance: which conversation produced a request -----------------------
+
+from datetime import datetime, timedelta  # noqa: E402
+
+from app.models.request import EnvironmentRequest  # noqa: E402
+
+
+def test_a_request_records_the_conversation_that_produced_it(client, project, users, enabled):
+    convo = ChatConversation(user_id=users['dev'].id, project_id=project.id)
+    db.session.add(convo)
+    db.session.commit()
+
+    start = datetime.now() + timedelta(hours=2)
+    login(client, 'dev')
+    resp = client.post('/api/v1/requests', json={
+        'environment_id': project.environments.first().id,
+        'start_time': start.isoformat(),
+        'end_time': (start + timedelta(hours=2)).isoformat(),
+        'reason': 'from chat',
+        'conversation_id': convo.id,
+    })
+    assert resp.status_code == 201
+    created = db.session.get(EnvironmentRequest, resp.get_json()['id'])
+    assert created.conversation_id == convo.id
+
+
+def test_someone_elses_conversation_id_is_ignored(client, project, users, enabled):
+    convo = ChatConversation(user_id=users['admin'].id, project_id=project.id)
+    db.session.add(convo)
+    db.session.commit()
+
+    start = datetime.now() + timedelta(hours=2)
+    login(client, 'dev')
+    resp = client.post('/api/v1/requests', json={
+        'environment_id': project.environments.first().id,
+        'start_time': start.isoformat(),
+        'end_time': (start + timedelta(hours=2)).isoformat(),
+        'reason': 'not mine',
+        'conversation_id': convo.id,
+    })
+    assert resp.status_code == 201
+    created = db.session.get(EnvironmentRequest, resp.get_json()['id'])
+    assert created.conversation_id is None
