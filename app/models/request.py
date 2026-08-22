@@ -5,9 +5,12 @@ from ..extensions import db
 class EnvironmentRequest(db.Model):
     __tablename__ = 'environment_requests'
 
+    # 'extension_pending' used to be declared here but was never assigned by any
+    # code path — extensions are separate child rows linked by parent_request_id.
+    # It only ever surfaced as a filter that could match nothing.
     STATUSES = [
         'pending', 'approved', 'declined', 'starting', 'active',
-        'stopping', 'completed', 'failed', 'cancelled', 'extension_pending'
+        'stopping', 'completed', 'failed', 'cancelled',
     ]
 
     ACTION_TYPES = [

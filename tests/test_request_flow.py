@@ -177,3 +177,47 @@ def test_developer_only_sees_own_requests(client, project, users):
     client.post('/api/v1/auth/logout')
     login(client, 'ops')
     assert len(client.get('/api/v1/requests').get_json()['requests']) == 1
+
+
+def test_the_status_filter_accepts_several_statuses(client, project, users):
+    """Lifecycle groups ("Finished") need one query, not four."""
+    login(client, 'dev')
+    start = datetime.now() + timedelta(hours=2)
+    ids = []
+    for reason in ('one', 'two', 'three'):
+        ids.append(client.post('/api/v1/requests', json={
+            'environment_id': _env_id(project),
+            'start_time': start.isoformat(),
+            'end_time': (start + timedelta(hours=1)).isoformat(),
+            'reason': reason,
+        }).get_json()['id'])
+
+    for rid, status in zip(ids, ('completed', 'failed', 'pending')):
+        db.session.get(EnvironmentRequest, rid).status = status
+    db.session.commit()
+
+    body = client.get('/api/v1/requests?status=completed,failed').get_json()
+    assert {r['status'] for r in body['requests']} == {'completed', 'failed'}
+
+    body = client.get('/api/v1/requests?status=pending').get_json()
+    assert [r['status'] for r in body['requests']] == ['pending']
+
+
+def test_an_unknown_status_filter_falls_back_to_everything(client, project, users):
+    """A stale bookmark should not render an error page."""
+    login(client, 'dev')
+    start = datetime.now() + timedelta(hours=2)
+    client.post('/api/v1/requests', json={
+        'environment_id': _env_id(project),
+        'start_time': start.isoformat(),
+        'end_time': (start + timedelta(hours=1)).isoformat(),
+        'reason': 'x',
+    })
+
+    body = client.get('/api/v1/requests?status=extension_pending').get_json()
+    assert len(body['requests']) == 1
+
+
+def test_no_declared_status_is_unreachable(app):
+    """Every status offered as a filter must be one the app can actually set."""
+    assert 'extension_pending' not in EnvironmentRequest.STATUSES

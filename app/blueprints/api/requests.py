@@ -50,7 +50,14 @@ def list_requests():
 
     query = _scoped(EnvironmentRequest.query)
     if status_filter:
-        query = query.filter_by(status=status_filter)
+        # Comma-separated, so the UI can offer lifecycle groups ("Running" =
+        # starting, active, stopping) instead of one tab per state. Unknown
+        # values are dropped rather than 400ing — a stale bookmark should show
+        # everything, not an error.
+        wanted = [s for s in (v.strip() for v in status_filter.split(','))
+                  if s in EnvironmentRequest.STATUSES]
+        if wanted:
+            query = query.filter(EnvironmentRequest.status.in_(wanted))
 
     pagination = query.order_by(EnvironmentRequest.created_at.desc()).paginate(
         page=page, per_page=per_page, error_out=False)
