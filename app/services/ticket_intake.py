@@ -39,9 +39,9 @@ _TAG = re.compile(r'<[^>]+>')
 
 def trigger_address():
     """The address whose presence in a body creates a ticket."""
-    cfg = current_app.config
-    return (cfg.get('TICKET_TRIGGER_ADDRESS')
-            or cfg.get('DEVOPS_MAILBOX') or '').strip()
+    from ..models.setting import get_setting
+    return (get_setting('TICKET_TRIGGER_ADDRESS')
+            or get_setting('DEVOPS_MAILBOX') or '').strip()
 
 
 def normalise_body(text):
@@ -235,8 +235,10 @@ def send_acknowledgement(ticket, internet_message_id=None):
     from ..models.audit import AuditLog
     from . import graph_mail
 
-    mailbox = (current_app.config.get('DEVOPS_MAILBOX') or '').casefold()
-    if (not current_app.config.get('TICKET_ACK_ENABLED')
+    from ..models.setting import get_setting, setting_bool
+
+    mailbox = (get_setting('DEVOPS_MAILBOX') or '').casefold()
+    if (not setting_bool('TICKET_ACK_ENABLED')
             or not graph_mail.is_enabled()
             or not ticket.requester_email
             or ticket.requester_email.casefold() == mailbox
@@ -271,6 +273,26 @@ def send_acknowledgement(ticket, internet_message_id=None):
         db.session.commit()
         AuditLog.log('ticket_ack_failed', 'ticket', ticket.id,
                      details={'error': str(exc)[:300]})
+
+
+def check_connection():
+    """Reach the mailbox once and report what happened, in words.
+
+    poll_once deliberately swallows failures — a scheduled job that raises every
+    two minutes is just log noise. But on setup day the specific Graph error is
+    the whole point, so this surfaces it instead.
+    """
+    from . import graph_mail
+
+    if not graph_mail.is_enabled():
+        raise graph_mail.MailUnavailable(
+            'Microsoft Graph is not configured: set the tenant id, client id, '
+            'client secret and mailbox.')
+
+    messages = graph_mail.fetch_messages(_watermark(), limit=1)
+    return {'mailbox': current_app.config.get('DEVOPS_MAILBOX'),
+            'reachable': True,
+            'sample_fetched': len(messages)}
 
 
 def poll_once():

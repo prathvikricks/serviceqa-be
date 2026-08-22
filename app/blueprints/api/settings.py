@@ -22,6 +22,13 @@ from . import api_bp
 logger = logging.getLogger(__name__)
 
 
+def _invalidate_caches(key):
+    """A changed credential must take effect now, not when the token expires."""
+    if key.startswith('GRAPH_'):
+        from ...services import graph_mail
+        graph_mail.reset_token_cache()
+
+
 def _describe(key, meta):
     row = Setting.query.filter_by(key=key).first()
     stored = row.get_value() if row else ''
@@ -70,6 +77,8 @@ def settings_update(key):
     db.session.commit()
 
     # Never the value, not even truncated beyond the display hint.
+    _invalidate_caches(key)
+
     AuditLog.log('setting_updated', 'setting', row.id,
                  user_id=current_user.id, ip_address=request.remote_addr,
                  details={'key': key})
@@ -88,6 +97,7 @@ def settings_clear(key):
     if row is not None:
         db.session.delete(row)
         db.session.commit()
+        _invalidate_caches(key)
         AuditLog.log('setting_cleared', 'setting', None,
                      user_id=current_user.id, ip_address=request.remote_addr,
                      details={'key': key})

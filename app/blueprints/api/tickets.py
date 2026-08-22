@@ -12,7 +12,7 @@ from flask import current_app, jsonify, request
 from flask_login import login_required, current_user
 from sqlalchemy import or_
 
-from ...decorators import devops_required
+from ...decorators import admin_required, devops_required
 from ...extensions import db
 from ...models.audit import AuditLog
 from ...models.project import Project
@@ -254,3 +254,37 @@ def ticket_comment(ticket_id):
     db.session.add(comment)
     db.session.commit()
     return jsonify(ticket_comment_dict(comment)), 201
+
+
+@api_bp.route('/tickets/intake/test', methods=['POST'])
+@login_required
+@admin_required
+def ticket_intake_test():
+    """Reach the mailbox now and say exactly what went wrong if it fails.
+
+    Setup involves an app registration, admin consent and an access policy, any
+    of which can be half-done. Waiting for the next poll and then reading
+    container logs is a poor way to find that out.
+    """
+    from ...services import graph_mail, ticket_intake
+
+    try:
+        return jsonify(ticket_intake.check_connection())
+    except graph_mail.MailUnavailable as exc:
+        return jsonify({'reachable': False, 'error': str(exc)}), 503
+    except graph_mail.MailError as exc:
+        # Carries Graph's own message: 403 usually means consent was never
+        # granted, or the access policy does not cover this mailbox.
+        return jsonify({'reachable': False, 'error': str(exc)}), 502
+
+
+@api_bp.route('/tickets/intake/run', methods=['POST'])
+@login_required
+@admin_required
+def ticket_intake_run():
+    """Poll the mailbox immediately rather than waiting for the next tick."""
+    from ...services import graph_mail, ticket_intake
+
+    if not graph_mail.is_enabled():
+        return jsonify({'error': 'Microsoft Graph is not configured.'}), 503
+    return jsonify(ticket_intake.poll_once())

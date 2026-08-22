@@ -46,7 +46,9 @@ class MailPermanentError(MailError):
 
 
 def _cfg(key):
-    return current_app.config.get(key)
+    """Settings first, environment second — see models/setting.get_setting."""
+    from ..models.setting import get_setting
+    return get_setting(key)
 
 
 def is_enabled():

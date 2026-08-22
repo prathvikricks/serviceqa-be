@@ -28,6 +28,26 @@ class Setting(db.Model):
                            'help': 'Enables the chat assistant and ticket summaries.'},
         'GEMINI_MODEL': {'label': 'Gemini model', 'secret': False,
                          'help': 'Defaults to gemini-2.5-flash.'},
+        'GRAPH_TENANT_ID': {
+            'label': 'Microsoft tenant ID', 'secret': False,
+            'help': 'Entra ID → Overview → Directory (tenant) ID.'},
+        'GRAPH_CLIENT_ID': {
+            'label': 'Microsoft client ID', 'secret': False,
+            'help': 'The app registration\'s Application (client) ID.'},
+        'GRAPH_CLIENT_SECRET': {
+            'label': 'Microsoft client secret', 'secret': True,
+            'help': 'The secret VALUE, not its ID. Shown only once when created.'},
+        'DEVOPS_MAILBOX': {
+            'label': 'Team mailbox', 'secret': False,
+            'help': 'The shared mailbox to poll, e.g. devops@pacewisdom.com.'},
+        'TICKET_TRIGGER_ADDRESS': {
+            'label': 'Trigger address', 'secret': False,
+            'help': 'A ticket is created only when this appears in the email '
+                    'body. Blank uses the mailbox address.'},
+        'TICKET_ACK_ENABLED': {
+            'label': 'Acknowledge senders', 'secret': False,
+            'help': 'Set to 1 to email the sender a ticket reference. This mails '
+                    'real people as your team — leave at 0 until the queue looks right.'},
     }
 
     id = db.Column(db.Integer, primary_key=True)
@@ -76,6 +96,21 @@ class Setting(db.Model):
 
     def __repr__(self):
         return f'<Setting {self.key}>'
+
+
+def setting_bool(key, default=False):
+    """Resolve a setting as a boolean.
+
+    Needed because a stored value is always a string, and '0' is truthy in
+    Python — reading TICKET_ACK_ENABLED naively would start mailing people the
+    moment someone typed 0 to switch it off.
+    """
+    value = get_setting(key, None)
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
 
 
 def get_setting(key, default=None):

@@ -11,6 +11,8 @@ from app.models.email_intake import EmailIntakeMessage
 from app.models.ticket import Ticket
 from app.services import graph_mail, ticket_intake
 
+from conftest import login
+
 ADDR = 'devops@pacewisdom.com'
 
 
@@ -229,3 +231,50 @@ def test_the_poller_is_registered_with_the_scheduler():
 
     source = inspect.getsource(scheduler_service.init_scheduler)
     assert "id='mail_intake'" in source
+
+
+def test_the_connection_test_reports_a_graph_error_verbatim(intake, monkeypatch, client, users):
+    """On setup day the specific message is the whole value."""
+    def boom(since, limit=None):
+        raise graph_mail.MailPermanentError(
+            'Graph 403: Access to OData is disabled / policy does not cover mailbox')
+
+    monkeypatch.setattr(graph_mail, 'fetch_messages', boom)
+
+    login(client, 'admin')
+    resp = client.post('/api/v1/tickets/intake/test')
+    assert resp.status_code == 502
+    assert 'policy does not cover mailbox' in resp.get_json()['error']
+
+
+def test_the_connection_test_says_when_nothing_is_configured(app, client, users):
+    app.config.update(GRAPH_TENANT_ID=None, GRAPH_CLIENT_ID=None,
+                      GRAPH_CLIENT_SECRET=None, DEVOPS_MAILBOX=None)
+    login(client, 'admin')
+    resp = client.post('/api/v1/tickets/intake/test')
+    assert resp.status_code == 503
+    assert 'not configured' in resp.get_json()['error']
+
+
+def test_the_connection_test_succeeds_when_the_mailbox_answers(intake, monkeypatch,
+                                                               client, users):
+    _feed(monkeypatch, message())
+    login(client, 'admin')
+    body = client.post('/api/v1/tickets/intake/test').get_json()
+    assert body['reachable'] is True
+    assert body['mailbox'] == ADDR
+
+
+def test_only_an_admin_can_trigger_intake(intake, monkeypatch, client, users):
+    _feed(monkeypatch, message())
+    for username, expected in (('dev', 403), ('ops', 403), ('admin', 200)):
+        client.post('/api/v1/auth/logout')
+        login(client, username)
+        assert client.post('/api/v1/tickets/intake/run').status_code == expected
+
+
+def test_a_manual_run_creates_tickets_immediately(intake, monkeypatch, client, users):
+    _feed(monkeypatch, message())
+    login(client, 'admin')
+    body = client.post('/api/v1/tickets/intake/run').get_json()
+    assert body['created'] == 1
