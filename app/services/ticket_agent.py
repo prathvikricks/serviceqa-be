@@ -111,7 +111,7 @@ def enrich(subject, body, client=None):
     try:
         client = client or chat_agent._client()
         response = client.models.generate_content(
-            model=chat_agent.current_app.config.get('GEMINI_MODEL', 'gemini-2.5-flash'),
+            model=chat_agent.model_name(),
             contents=[{'role': 'user', 'parts': [{
                 'text': f'Subject: {subject or "(none)"}\n\n{(body or "")[:_MAX_BODY]}'}]}],
             config={

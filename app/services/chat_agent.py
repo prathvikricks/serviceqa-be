@@ -85,9 +85,24 @@ Rules:
 """
 
 
+def api_key():
+    """The Gemini key, from admin settings first and the environment second.
+
+    Reading through get_setting is what lets an admin paste a key on the
+    settings page and have the feature come alive without a restart.
+    """
+    from ..models.setting import get_setting
+    return get_setting('GEMINI_API_KEY')
+
+
+def model_name():
+    from ..models.setting import get_setting
+    return get_setting('GEMINI_MODEL') or 'gemini-2.5-flash'
+
+
 def is_enabled():
     """True if the chat feature is configured."""
-    return bool(current_app.config.get('GEMINI_API_KEY'))
+    return bool(api_key())
 
 
 def _client():
@@ -98,7 +113,7 @@ def _client():
         from google import genai
     except ImportError as exc:   # pragma: no cover - depends on the deploy
         raise AgentUnavailable('google-genai is not installed.') from exc
-    return genai.Client(api_key=current_app.config['GEMINI_API_KEY'])
+    return genai.Client(api_key=api_key())
 
 
 def build_project_context(project):
@@ -145,7 +160,7 @@ def _history_contents(conversation, user_message, correction=None):
 
 
 def _call(client, conversation, user_message, correction=None):
-    model = current_app.config.get('GEMINI_MODEL', 'gemini-2.5-flash')
+    model = model_name()
     config = {
         'system_instruction': _SYSTEM_INSTRUCTION + '\n\nProject context:\n'
                               + build_project_context(conversation.project),
