@@ -15,7 +15,7 @@ from datetime import date, datetime
 from ..models.environment import Environment
 from ..models.request import EnvironmentRequest
 
-SERVICE_FIELDS = ('environment_id', 'service_ids', 'action_type', 'schedule_type',
+SERVICE_FIELDS = ('environment_id', 'action_type', 'schedule_type',
                   'start_time', 'end_time', 'recurrence_days', 'start_hm',
                   'stop_hm', 'recur_until', 'reason')
 REPO_FIELDS = ('repo_name', 'repo_description', 'repo_visibility', 'reason')
@@ -62,16 +62,6 @@ def _validate_service(project, raw):
     if env is None:
         return None, [f'environment_id {raw.get("environment_id")!r} is not an '
                       f'environment of project {project.name}.']
-
-    valid_service_ids = {s.id for s in env.services.all()}
-    requested = raw.get('service_ids') or []
-    if not isinstance(requested, list):
-        problems.append('service_ids must be a list.')
-        requested = []
-    stray = [s for s in requested if s not in valid_service_ids]
-    if stray:
-        problems.append(f'service ids {stray} do not belong to environment '
-                        f'{env.display_name}.')
 
     action_type = raw.get('action_type') or 'start_stop'
     if action_type not in _ACTION_TYPES:
@@ -123,7 +113,6 @@ def _validate_service(project, raw):
 
     return {
         'environment_id': env.id,
-        'service_ids': list(requested),
         'action_type': action_type,
         'schedule_type': schedule_type,
         'start_time': start.isoformat(),

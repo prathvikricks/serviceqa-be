@@ -42,8 +42,11 @@ def test_the_prompt_only_describes_the_conversations_project(app, project, users
 
     assert project.name in context
     assert 'a-project-they-cannot-see' not in context
+    # Environments are named; the machines inside them deliberately are not, so
+    # the assistant cannot ask a developer which server to start.
+    assert project.environments.first().display_name in context
     for svc in project.environments.first().services.all():
-        assert svc.name in context
+        assert svc.name not in context
 
 
 def test_a_follow_up_turn_returns_no_draft(app, project, users):
@@ -70,7 +73,6 @@ def test_a_ready_turn_returns_a_validated_draft(app, project, users):
         'ready': True, 'missing': [], 'request_type': 'service',
         'draft': {
             'environment_id': env.id,
-            'service_ids': [s.id for s in env.services.all()],
             'action_type': 'start_stop', 'schedule_type': 'once',
             'start_time': start.replace(microsecond=0).isoformat(),
             'end_time': (start + timedelta(hours=8)).replace(microsecond=0).isoformat(),
@@ -92,7 +94,7 @@ def test_an_invalid_draft_is_dropped_and_retried_once(app, project, users):
     bad = {
         'reply': 'Ready.', 'ready': True, 'missing': [], 'request_type': 'service',
         'draft': {
-            'environment_id': env.id, 'service_ids': [9999],
+            'environment_id': 9999,
             'action_type': 'start_stop', 'schedule_type': 'once',
             'start_time': start.isoformat(),
             'end_time': (start + timedelta(hours=1)).isoformat(),

@@ -42,7 +42,6 @@ RESPONSE_SCHEMA = {
             'type': 'OBJECT',
             'properties': {
                 'environment_id': {'type': 'INTEGER'},
-                'service_ids': {'type': 'ARRAY', 'items': {'type': 'INTEGER'}},
                 'action_type': {'type': 'STRING', 'enum': ['start_stop', 'stop_start']},
                 'schedule_type': {'type': 'STRING', 'enum': ['once', 'weekly']},
                 'start_time': {'type': 'STRING'},
@@ -68,15 +67,20 @@ draft that the developer then reviews on a form.
 There are exactly two request types:
 
 - "service": schedule a start/stop window on an existing environment. Needs an
-  environment, the cloud services to act on, an action type, a schedule, and a
-  reason.
+  environment, an action type, a schedule, and a reason.
 - "repo": ask for a new Git repository. Needs a name, visibility, and a reason.
   An approver picks GitHub or GitLab later — never choose a provider yourself.
 
 Rules:
 - Ask one focused question at a time until you can fill a complete draft.
-- Only ever use the environment and service ids listed in the project context
-  below. Never invent an id, and never refer to anything not listed.
+- Only ever use the environment ids listed in the project context below. Never
+  invent an id, and never refer to an environment that is not listed.
+- Refer to environments by their friendly name ("UAT", "Staging"), never by id
+  and never by the underlying server or resource names. The person asking is a
+  developer who knows what they are trying to do, not what the machines are
+  called. DevOps decides which services are actually started.
+- Never ask which servers, instances or services to act on. That is not the
+  requester's decision.
 - Times are naive local times in the timezone stated below. Do not convert.
 - Set "ready": true and fill "draft" ONLY when every required field is known.
   Otherwise set "ready": false, leave "draft" null, and list what you still
@@ -133,15 +137,15 @@ def build_project_context(project):
         f'Weekday tokens: {", ".join(EnvironmentRequest.WEEKDAYS)}',
         'Time-of-day format: HH:MM (24-hour)',
         '',
-        'Environments and their cloud services:',
+        'Environments available to this developer:',
     ]
     for env in project.environments.all():
-        lines.append(f'- environment_id {env.id}: {env.display_name} ({env.name})')
-        services = env.services.all()
-        if not services:
-            lines.append('    (no cloud services registered)')
-        for svc in services:
-            lines.append(f'    service_id {svc.id}: {svc.name} [{svc.service_type}]')
+        # Deliberately no service or resource names. Which machines get started
+        # is DevOps's call at approval time, so naming them here would only
+        # invite the assistant to ask a question the requester cannot answer.
+        count = env.services.filter_by(is_active=True).count()
+        lines.append(f'- environment_id {env.id}: {env.display_name} '
+                     f'({count} service{"" if count == 1 else "s"})')
     return '\n'.join(lines)
 
 

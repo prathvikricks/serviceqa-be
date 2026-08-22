@@ -89,7 +89,10 @@ def request_dict(req, detail=False):
         'environment_id': req.environment_id,
         'environment': env.display_name if env else None,
         'project': project.name if project else None,
-        'project_id': req.project_id,
+        # Resolved through the model property, not the repo-only column: a
+        # service request reaches its project via its environment, and callers
+        # need the id for both types (e.g. listing environments to move it to).
+        'project_id': project.id if project else None,
         # Repo-request fields (null for service requests).
         'repo_name': req.repo_name,
         'repo_description': req.repo_description,
@@ -124,6 +127,9 @@ def request_dict(req, detail=False):
 def request_service_dict(rs):
     return {
         'id': rs.id,
+        # The underlying CloudService, so the approver's adjust dialog can show
+        # which services are actually selected rather than defaulting to all.
+        'cloud_service_id': rs.cloud_service_id,
         'name': rs.cloud_service.name,
         'type': rs.cloud_service.service_type,
         'action_status': rs.action_status,

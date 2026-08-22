@@ -12,11 +12,10 @@ from app.models.project import Project
 from app.services.chat_validation import validate_draft
 
 
-def _service_raw(env_id, service_ids, **over):
+def _service_raw(env_id, **over):
     start = datetime.now() + timedelta(days=1)
     raw = {
         'environment_id': env_id,
-        'service_ids': service_ids,
         'action_type': 'start_stop',
         'schedule_type': 'once',
         'start_time': start.replace(microsecond=0).isoformat(),
@@ -29,13 +28,15 @@ def _service_raw(env_id, service_ids, **over):
 
 def test_a_good_service_draft_passes(project):
     env = project.environments.first()
-    ids = [s.id for s in env.services.all()]
 
-    clean, problems = validate_draft(project, 'service', _service_raw(env.id, ids))
+    clean, problems = validate_draft(project, 'service', _service_raw(env.id))
 
     assert problems == []
     assert clean['environment_id'] == env.id
-    assert sorted(clean['service_ids']) == sorted(ids)
+    # The assistant no longer names services: which machines start is DevOps's
+    # call at approval time, and create_request has always used every active
+    # service in the environment regardless.
+    assert 'service_ids' not in clean
 
 
 def test_an_environment_from_another_project_is_rejected(project, users):
@@ -48,13 +49,14 @@ def test_an_environment_from_another_project_is_rejected(project, users):
     db.session.add(foreign_env)
     db.session.commit()
 
-    clean, problems = validate_draft(project, 'service', _service_raw(foreign_env.id, []))
+    clean, problems = validate_draft(project, 'service', _service_raw(foreign_env.id))
 
     assert clean is None
     assert any('environment' in p for p in problems)
 
 
-def test_a_service_from_another_environment_is_rejected(project, users):
+def test_a_service_named_by_the_model_is_simply_ignored(project, users):
+    """Service selection is not the requester's decision, so it is not accepted."""
     env = project.environments.first()
     other_env = Environment(project_id=project.id, name='dev', display_name='Dev')
     db.session.add(other_env)
@@ -65,16 +67,17 @@ def test_a_service_from_another_environment_is_rejected(project, users):
     db.session.add(stray)
     db.session.commit()
 
-    clean, problems = validate_draft(project, 'service', _service_raw(env.id, [stray.id]))
+    clean, problems = validate_draft(
+        project, 'service', _service_raw(env.id, service_ids=[stray.id]))
 
-    assert clean is None
-    assert any('service' in p for p in problems)
+    assert problems == []
+    assert 'service_ids' not in clean
 
 
 def test_an_unknown_action_type_is_rejected(project):
     env = project.environments.first()
     clean, problems = validate_draft(
-        project, 'service', _service_raw(env.id, [], action_type='obliterate'))
+        project, 'service', _service_raw(env.id, action_type='obliterate'))
     assert clean is None
 
 
@@ -82,7 +85,7 @@ def test_an_end_before_its_start_is_rejected(project):
     env = project.environments.first()
     start = datetime.now() + timedelta(days=1)
     clean, problems = validate_draft(project, 'service', _service_raw(
-        env.id, [],
+        env.id,
         start_time=start.isoformat(),
         end_time=(start - timedelta(hours=1)).isoformat()))
     assert clean is None
@@ -91,7 +94,7 @@ def test_an_end_before_its_start_is_rejected(project):
 def test_bad_weekday_tokens_are_rejected(project):
     env = project.environments.first()
     clean, problems = validate_draft(project, 'service', _service_raw(
-        env.id, [], schedule_type='weekly', recurrence_days='mon,funday',
+        env.id, schedule_type='weekly', recurrence_days='mon,funday',
         start_hm='09:00', stop_hm='17:00'))
     assert clean is None
 
@@ -100,7 +103,7 @@ def test_a_past_recur_until_is_rejected(project):
     env = project.environments.first()
     yesterday = (datetime.now() - timedelta(days=1)).date().isoformat()
     clean, problems = validate_draft(project, 'service', _service_raw(
-        env.id, [], schedule_type='weekly', recurrence_days='mon',
+        env.id, schedule_type='weekly', recurrence_days='mon',
         start_hm='09:00', stop_hm='17:00', recur_until=yesterday))
     assert clean is None
 

@@ -129,6 +129,94 @@ def _approve_repo_request(env_request, comment):
     return jsonify(request_dict(env_request, detail=True)), status_code
 
 
+@api_bp.route('/approvals/<int:request_id>/adjust', methods=['PATCH'])
+@login_required
+@devops_required
+def adjust(request_id):
+    """Let the approver fix a request before approving it.
+
+    A developer asks for an outcome ("UAT up for the demo on Tuesday"); they are
+    not expected to know which environment maps to that, let alone which
+    machines it contains. So the approver — who does know — can correct the
+    environment and choose which services actually start, rather than bouncing
+    the request back and making the requester guess again.
+
+    Pending service requests only. Once a request is approved its jobs are
+    armed, and once it is running the services are already up.
+    """
+    from ...models.request import RequestService
+
+    env_request = _get_or_404(EnvironmentRequest, request_id)
+
+    denied = _require_project_approver(env_request)
+    if denied:
+        return denied
+
+    if env_request.is_repo:
+        return jsonify({'error': 'Repo requests have nothing to adjust.'}), 400
+    if env_request.status != 'pending':
+        return jsonify({'error': 'Only a pending request can be adjusted.'}), 400
+
+    data = request.get_json(silent=True) or {}
+    project = env_request.project
+    changes = []
+    # Track the target explicitly. Assigning environment_id alone leaves the
+    # `environment` relationship pointing at the old row for the rest of this
+    # request, which would rebuild the services and re-price against it.
+    env = env_request.environment
+
+    if 'environment_id' in data:
+        target = Environment.query.filter_by(
+            id=data['environment_id'], project_id=project.id).first()
+        if target is None:
+            return jsonify({'error': 'That environment is not in this project.'}), 400
+        if target.id != env_request.environment_id:
+            env_request.environment = target
+            # The old rows point at services in a different environment.
+            env_request.services.delete()
+            db.session.flush()
+            changes.append(f'environment → {target.display_name}')
+        env = target
+    if 'service_ids' in data:
+        wanted = data.get('service_ids') or []
+        if not isinstance(wanted, list):
+            return jsonify({'error': 'service_ids must be a list.'}), 400
+        valid = {s.id for s in env.services.filter_by(is_active=True).all()}
+        stray = [s for s in wanted if s not in valid]
+        if stray:
+            return jsonify({'error': f'Services {stray} are not in {env.display_name}.'}), 400
+        env_request.services.delete()
+        db.session.flush()
+        for service_id in wanted:
+            db.session.add(RequestService(request_id=env_request.id,
+                                          cloud_service_id=service_id))
+        changes.append(f'{len(wanted)} service(s) selected')
+    elif changes:
+        # Environment changed but no explicit selection: fall back to the same
+        # everything-active default the request was created with.
+        for svc in env.services.filter_by(is_active=True).all():
+            db.session.add(RequestService(request_id=env_request.id,
+                                          cloud_service_id=svc.id))
+
+    if not changes:
+        return jsonify({'error': 'Nothing to adjust.'}), 400
+
+    # The stored estimate was computed against the old environment.
+    from ...services.cost_estimator import estimate_request_cost
+    try:
+        env_request.estimated_cost = estimate_request_cost(
+            env, env_request.start_time, env_request.end_time)
+    except Exception:
+        logger.warning('Could not re-estimate cost for request %s', request_id)
+
+    db.session.commit()
+
+    AuditLog.log('request_adjusted', 'request', env_request.id,
+                 user_id=current_user.id, ip_address=request.remote_addr,
+                 details={'changes': changes})
+    return jsonify(request_dict(env_request, detail=True))
+
+
 @api_bp.route('/approvals/<int:request_id>/approve', methods=['POST'])
 @login_required
 @devops_required

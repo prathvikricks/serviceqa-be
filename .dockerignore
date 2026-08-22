@@ -3,4 +3,7 @@ __pycache__/
 .pytest_cache/
 instance/
 .env
+# The local virtualenv is ~700MB and the image builds its own — without this
+# every build ships it into the context and eventually fills the disk.
 venv/
+.venv/
