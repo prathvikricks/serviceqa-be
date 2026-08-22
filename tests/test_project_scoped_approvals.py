@@ -43,3 +43,95 @@ def test_developer_membership_grants_no_approval_rights(project, users):
 
 def test_admin_is_always_a_project_approver(project, users):
     assert users['admin'].is_project_devops(project.id) is True
+
+
+# --- approvals inbox scoping ------------------------------------------------
+
+from datetime import datetime, timedelta  # noqa: E402
+
+from app.models.project import Project  # noqa: E402
+from app.models.environment import Environment  # noqa: E402
+from app.models.request import EnvironmentRequest  # noqa: E402
+
+
+def _second_project(users):
+    """A second project with its own environment, so scoping is observable."""
+    p = Project(name='Other', slug='other', cloud_provider='aws', mode='mock',
+                created_by=users['admin'].id)
+    p.set_provider_config({'region': 'us-east-1'})
+    db.session.add(p)
+    db.session.flush()
+    env = Environment(project_id=p.id, name='dev', display_name='Dev')
+    db.session.add(env)
+    db.session.commit()
+    return p
+
+
+def _service_request(env_id, requester_id):
+    start = datetime.now() + timedelta(hours=2)
+    req = EnvironmentRequest(
+        requester_id=requester_id, request_type='service', environment_id=env_id,
+        start_time=start, end_time=start + timedelta(hours=1),
+        reason='scoping fixture')
+    db.session.add(req)
+    db.session.commit()
+    return req
+
+
+def _repo_request(project_id, requester_id):
+    req = EnvironmentRequest(
+        requester_id=requester_id, request_type='repo', project_id=project_id,
+        action_type='create_repo', repo_name='billing-svc',
+        repo_visibility='private', reason='scoping fixture')
+    db.session.add(req)
+    db.session.commit()
+    return req
+
+
+def test_approvals_list_shows_only_your_projects(client, project, users):
+    other = _second_project(users)
+    mine = _service_request(project.environments.first().id, users['dev'].id)
+    theirs = _service_request(other.environments.first().id, users['dev'].id)
+
+    ops = make_user('ops2', 'devops')
+    _member(project, ops, 'devops')
+
+    login(client, 'ops2')
+    ids = {r['id'] for r in client.get('/api/v1/approvals').get_json()['requests']}
+    assert mine.id in ids
+    assert theirs.id not in ids
+
+
+def test_approvals_list_includes_repo_requests_of_your_projects(client, project, users):
+    other = _second_project(users)
+    mine = _repo_request(project.id, users['dev'].id)
+    theirs = _repo_request(other.id, users['dev'].id)
+
+    ops = make_user('ops2', 'devops')
+    _member(project, ops, 'devops')
+
+    login(client, 'ops2')
+    ids = {r['id'] for r in client.get('/api/v1/approvals').get_json()['requests']}
+    assert mine.id in ids
+    assert theirs.id not in ids
+
+
+def test_admin_sees_every_project(client, project, users):
+    other = _second_project(users)
+    mine = _service_request(project.environments.first().id, users['dev'].id)
+    theirs = _service_request(other.environments.first().id, users['dev'].id)
+
+    login(client, 'admin')
+    ids = {r['id'] for r in client.get('/api/v1/approvals').get_json()['requests']}
+    assert {mine.id, theirs.id} <= ids
+
+
+def test_devops_with_no_project_role_sees_an_empty_inbox(client, project, users):
+    _service_request(project.environments.first().id, users['dev'].id)
+    login(client, 'ops')          # global devops, no project_role anywhere
+    assert client.get('/api/v1/approvals').get_json()['requests'] == []
+
+
+def test_plain_developer_is_denied_the_approvals_list(client, project, users):
+    login(client, 'dev')
+    assert client.get('/api/v1/approvals').status_code == 403

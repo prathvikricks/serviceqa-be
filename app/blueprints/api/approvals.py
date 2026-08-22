@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timezone
 from flask import jsonify, request, current_app
 from flask_login import login_required, current_user
+from sqlalchemy import or_, false
 
 from ...extensions import db
 from ...decorators import devops_required
@@ -15,6 +16,18 @@ from .helpers import _get_or_404
 from .serializers import request_dict
 
 logger = logging.getLogger(__name__)
+
+
+def _approvable_project_ids(user):
+    """Projects whose requests this user may see and act on.
+
+    Returns None for an unrestricted view (admins only). An empty list means a
+    genuinely empty inbox — a devops nobody has added to a project yet.
+    """
+    if user.is_admin:
+        return None
+    return [m.project_id for m in
+            user.project_memberships.filter_by(project_role='devops').all()]
 
 
 @api_bp.route('/approvals')
@@ -30,6 +43,19 @@ def approvals_list():
         pass
     else:
         query = query.filter_by(status=status)
+
+    # A service request reaches its project through its environment; a repo
+    # request carries a direct project_id. Both must be scoped.
+    project_ids = _approvable_project_ids(current_user)
+    if project_ids is not None:
+        if project_ids:
+            query = query.filter(or_(
+                EnvironmentRequest.environment.has(
+                    Environment.project_id.in_(project_ids)),
+                EnvironmentRequest.project_id.in_(project_ids),
+            ))
+        else:
+            query = query.filter(false())
 
     requests_list = query.order_by(EnvironmentRequest.created_at.desc()).all()
 
