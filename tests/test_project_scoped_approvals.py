@@ -175,3 +175,34 @@ def test_project_devops_can_approve_their_own_projects_request(client, project, 
     resp = client.post(f'/api/v1/approvals/{mine.id}/approve', json={'comment': 'ok'})
     assert resp.status_code == 200
     assert db.session.get(EnvironmentRequest, mine.id).status != 'pending'
+
+
+# --- admin management of project roles ---------------------------------------
+
+def test_admin_can_add_a_member_as_project_devops(client, project, users):
+    make_user('ops2', 'devops')
+    login(client, 'admin')
+
+    resp = client.post(f'/api/v1/admin/projects/{project.id}/members',
+                       json={'username': 'ops2', 'project_role': 'devops'})
+    assert resp.status_code == 201
+    assert resp.get_json()['project_role'] == 'devops'
+
+
+def test_admin_can_change_a_members_project_role(client, project, users):
+    member = project.members.filter_by(user_id=users['dev'].id).first()
+    login(client, 'admin')
+
+    resp = client.put(f'/api/v1/admin/projects/{project.id}/members/{member.id}',
+                      json={'project_role': 'devops'})
+    assert resp.status_code == 200
+    assert resp.get_json()['project_role'] == 'devops'
+
+
+def test_an_unknown_project_role_is_rejected(client, project, users):
+    member = project.members.filter_by(user_id=users['dev'].id).first()
+    login(client, 'admin')
+
+    resp = client.put(f'/api/v1/admin/projects/{project.id}/members/{member.id}',
+                      json={'project_role': 'superuser'})
+    assert resp.status_code == 400

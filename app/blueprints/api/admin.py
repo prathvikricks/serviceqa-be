@@ -469,15 +469,20 @@ def admin_member_add(pid):
     if project.members.filter_by(user_id=user.id).first():
         return jsonify({'error': 'That user is already a member.'}), 400
 
+    project_role = (data.get('project_role') or 'developer').strip().lower()
+    if project_role not in ProjectMember.ROLES:
+        return jsonify({'error': f'Role must be one of: {", ".join(ProjectMember.ROLES)}.'}), 400
+
     member = ProjectMember(project_id=project.id, user_id=user.id,
                            added_by=current_user.id,
+                           project_role=project_role,
                            can_view_secrets=bool(data.get('can_view_secrets', False)))
     db.session.add(member)
     db.session.commit()
 
     AuditLog.log('member_added', 'project', project.id,
                  user_id=current_user.id, ip_address=request.remote_addr,
-                 details={'username': user.username})
+                 details={'username': user.username, 'project_role': project_role})
     return jsonify(member_dict(member)), 201
 
 
@@ -485,23 +490,32 @@ def admin_member_add(pid):
 @login_required
 @admin_required
 def admin_member_update(pid, mid):
-    """Grant or revoke this member's permission to reveal project secrets."""
+    """Update this member's project role and/or their permission to reveal secrets."""
     _get_or_404(Project, pid)
     member = _get_or_404(ProjectMember, mid)
     if member.project_id != pid:
         return jsonify({'error': 'Not found.'}), 404
 
     data = request.get_json(silent=True) or {}
-    if 'can_view_secrets' not in data:
+    if 'can_view_secrets' not in data and 'project_role' not in data:
         return jsonify({'error': 'Nothing to update.'}), 400
 
-    member.can_view_secrets = bool(data['can_view_secrets'])
+    if 'project_role' in data:
+        project_role = (data.get('project_role') or '').strip().lower()
+        if project_role not in ProjectMember.ROLES:
+            return jsonify({'error': f'Role must be one of: {", ".join(ProjectMember.ROLES)}.'}), 400
+        member.project_role = project_role
+
+    if 'can_view_secrets' in data:
+        member.can_view_secrets = bool(data['can_view_secrets'])
+
     db.session.commit()
 
     AuditLog.log('member_permission_updated', 'project', pid,
                  user_id=current_user.id, ip_address=request.remote_addr,
                  details={'username': member.user.username,
-                          'can_view_secrets': member.can_view_secrets})
+                          'can_view_secrets': member.can_view_secrets,
+                          'project_role': member.project_role})
     return jsonify(member_dict(member))
 
 
