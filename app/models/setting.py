@@ -21,30 +21,41 @@ from ..extensions import db
 class Setting(db.Model):
     __tablename__ = 'settings'
 
+    # Integrations, in the order they appear on the settings index. Grouping
+    # lives here rather than being inferred client-side from key prefixes —
+    # DEVOPS_MAILBOX and TICKET_ACK_ENABLED belong to mail but share no prefix
+    # with GRAPH_*.
+    GROUPS = {
+        'llm': {'label': 'AI assistant',
+                'blurb': 'Chat assistant and ticket summaries.'},
+        'mail': {'label': 'Email intake',
+                 'blurb': 'Turn mail sent to the team address into tickets.'},
+    }
+
     # Only keys listed here can be written through the API. An open key/value
     # store reachable by HTTP is a way to overwrite SECRET_KEY by accident.
     EDITABLE = {
-        'GEMINI_API_KEY': {'label': 'Gemini API key', 'secret': True,
+        'GEMINI_API_KEY': {'group': 'llm', 'label': 'Gemini API key', 'secret': True,
                            'help': 'Enables the chat assistant and ticket summaries.'},
-        'GEMINI_MODEL': {'label': 'Gemini model', 'secret': False,
+        'GEMINI_MODEL': {'group': 'llm', 'label': 'Gemini model', 'secret': False,
                          'help': 'Defaults to gemini-2.5-flash.'},
-        'GRAPH_TENANT_ID': {
+        'GRAPH_TENANT_ID': {'group': 'mail', 
             'label': 'Microsoft tenant ID', 'secret': False,
             'help': 'Entra ID → Overview → Directory (tenant) ID.'},
-        'GRAPH_CLIENT_ID': {
+        'GRAPH_CLIENT_ID': {'group': 'mail', 
             'label': 'Microsoft client ID', 'secret': False,
             'help': 'The app registration\'s Application (client) ID.'},
-        'GRAPH_CLIENT_SECRET': {
+        'GRAPH_CLIENT_SECRET': {'group': 'mail', 
             'label': 'Microsoft client secret', 'secret': True,
             'help': 'The secret VALUE, not its ID. Shown only once when created.'},
-        'DEVOPS_MAILBOX': {
+        'DEVOPS_MAILBOX': {'group': 'mail', 
             'label': 'Team mailbox', 'secret': False,
             'help': 'The shared mailbox to poll, e.g. devops@pacewisdom.com.'},
-        'TICKET_TRIGGER_ADDRESS': {
+        'TICKET_TRIGGER_ADDRESS': {'group': 'mail', 
             'label': 'Trigger address', 'secret': False,
             'help': 'A ticket is created only when this appears in the email '
                     'body. Blank uses the mailbox address.'},
-        'TICKET_ACK_ENABLED': {
+        'TICKET_ACK_ENABLED': {'group': 'mail', 
             'label': 'Acknowledge senders', 'secret': False,
             'help': 'Set to 1 to email the sender a ticket reference. This mails '
                     'real people as your team — leave at 0 until the queue looks right.'},

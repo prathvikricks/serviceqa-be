@@ -120,6 +120,44 @@ def _client():
     return genai.Client(api_key=api_key())
 
 
+# Models that advertise generateContent but cannot hold a JSON conversation:
+# image generators, speech and music. Picking one would break the assistant in a
+# way that reads as "the chat is broken" rather than "wrong model". A name
+# heuristic is crude, but the API exposes nothing that distinguishes them.
+_NOT_FOR_CHAT = ('image', 'tts', 'audio', 'lyria', 'nano-banana', 'veo',
+                 'imagen', 'embedding', 'robotics', 'computer-use')
+
+
+def _is_chat_model(name):
+    return not any(token in name for token in _NOT_FOR_CHAT)
+
+
+def list_models(client=None):
+    """Base models this key can actually call generateContent on.
+
+    The dropdown on the settings page is populated from this rather than a
+    hardcoded list, so it reflects what the key is entitled to. Fetching it is
+    also the key check: a bad key fails here, in words, instead of silently at a
+    developer's first chat turn.
+    """
+    client = client or _client()
+    try:
+        models = []
+        for model in client.models.list(config={'query_base': True}):
+            actions = getattr(model, 'supported_actions', None) or []
+            if 'generateContent' not in actions:
+                continue
+            name = (getattr(model, 'name', '') or '').split('/')[-1]
+            if not name or not _is_chat_model(name):
+                continue
+            models.append({'name': name,
+                           'display_name': getattr(model, 'display_name', None) or name})
+        return sorted(models, key=lambda m: m['name'])
+    except Exception as exc:
+        logger.warning('Could not list Gemini models: %s', exc)
+        raise AgentError(str(exc)[:300]) from exc
+
+
 def build_project_context(project):
     """Everything the model is allowed to know: this project and nothing else.
 

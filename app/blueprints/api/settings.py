@@ -53,7 +53,103 @@ def _describe(key, meta):
 @login_required
 @admin_required
 def settings_list():
-    return jsonify({'settings': [_describe(k, m) for k, m in Setting.EDITABLE.items()]})
+    return jsonify({
+        'settings': [_describe(k, m) for k, m in Setting.EDITABLE.items()],
+        'groups': Setting.GROUPS,
+    })
+
+
+@api_bp.route('/admin/settings', methods=['PUT'])
+@login_required
+@admin_required
+def settings_update_many():
+    """Save a whole integration at once.
+
+    Four Microsoft credentials come from one app registration in one sitting;
+    saving them one at a time means the feature briefly looks configured with a
+    tenant id and no secret. Validation happens for every key before anything is
+    written, so a typo saves nothing rather than half of it.
+    """
+    values = (request.get_json(silent=True) or {}).get('values')
+    if not isinstance(values, dict) or not values:
+        return jsonify({'error': 'No values supplied.'}), 400
+
+    unknown = [k for k in values if k not in Setting.EDITABLE]
+    if unknown:
+        return jsonify({'error': f'Cannot edit: {", ".join(sorted(unknown))}.'}), 400
+
+    changed = []
+    for key, raw in values.items():
+        value = ('' if raw is None else str(raw)).strip()
+        row = Setting.query.filter_by(key=key).first()
+
+        if not value:
+            # Empty clears, matching DELETE — the env var takes over again.
+            if row is not None:
+                db.session.delete(row)
+                changed.append(key)
+            continue
+
+        if row is None:
+            row = Setting(key=key)
+            db.session.add(row)
+        row.set_value(value)
+        row.updated_by = current_user.id
+        changed.append(key)
+
+    db.session.commit()
+    for key in changed:
+        _invalidate_caches(key)
+
+    if changed:
+        AuditLog.log('setting_updated', 'setting', None,
+                     user_id=current_user.id, ip_address=request.remote_addr,
+                     details={'keys': sorted(changed)})
+
+    return jsonify({
+        'settings': [_describe(k, m) for k, m in Setting.EDITABLE.items()],
+        'groups': Setting.GROUPS,
+    })
+
+
+@api_bp.route('/admin/settings/status')
+@login_required
+@admin_required
+def settings_status():
+    """What each integration is actually doing, not just whether it is filled in."""
+    from ...services import chat_agent, graph_mail, ticket_intake
+
+    llm = {'configured': chat_agent.is_enabled(), 'model': chat_agent.model_name()}
+
+    mail = {'configured': graph_mail.is_enabled(),
+            'mailbox': current_app.config.get('DEVOPS_MAILBOX'),
+            'reachable': False, 'error': None}
+    if mail['configured']:
+        try:
+            result = ticket_intake.check_connection()
+            mail['reachable'] = True
+            mail['mailbox'] = result.get('mailbox')
+        except Exception as exc:
+            # A tile that says "configured" while Graph refuses is exactly the
+            # failure this endpoint exists to surface.
+            mail['error'] = str(exc)[:300]
+
+    return jsonify({'llm': llm, 'mail': mail})
+
+
+@api_bp.route('/admin/settings/llm/models')
+@login_required
+@admin_required
+def settings_llm_models():
+    """The models this key can use. Failing here is the bad-key signal."""
+    from ...services import chat_agent
+
+    try:
+        return jsonify({'models': chat_agent.list_models()})
+    except chat_agent.AgentUnavailable as exc:
+        return jsonify({'error': str(exc)}), 503
+    except chat_agent.AgentError as exc:
+        return jsonify({'error': str(exc)}), 502
 
 
 @api_bp.route('/admin/settings/<key>', methods=['PUT'])
