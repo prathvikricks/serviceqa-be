@@ -158,3 +158,10 @@ def test_status_endpoint_is_readable_by_any_user_and_leaks_no_secret(client, use
 def test_the_queue_hides_itself_when_there_is_nothing_and_no_intake(client, users):
     login(client, 'dev')
     assert client.get('/api/v1/tickets/status').get_json()['enabled'] is False
+
+
+def test_ticket_timestamps_carry_an_explicit_utc_offset(client, users, ticket):
+    """Without the marker a browser reads naive UTC as local and ages are wrong."""
+    login(client, 'ops')
+    body = client.get(f'/api/v1/tickets/{ticket.id}').get_json()
+    assert body['created_at'].endswith('Z') or '+' in body['created_at']

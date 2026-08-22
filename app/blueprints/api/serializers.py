@@ -215,6 +215,22 @@ def conversation_dict(convo, with_messages=False):
     return data
 
 
+def _utc(value):
+    """Serialize a genuinely-UTC datetime with an explicit offset.
+
+    Distinct from _dt on purpose. Request windows are stored NAIVE LOCAL by
+    design (the scheduler contract), so _dt must stay offset-free. Ticket
+    timestamps are written with datetime.now(timezone.utc) but land in a naive
+    column, so without this marker the browser reads them as local time and
+    every ticket looks hours old the moment it is created.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.isoformat() + 'Z'
+    return value.isoformat()
+
+
 def ticket_comment_dict(comment):
     return {
         'id': comment.id,
@@ -222,7 +238,7 @@ def ticket_comment_dict(comment):
         'author_id': comment.author_id,
         'body': comment.body,
         'is_system': bool(comment.is_system),
-        'created_at': _dt(comment.created_at),
+        'created_at': _utc(comment.created_at),
     }
 
 
@@ -244,9 +260,9 @@ def ticket_dict(ticket, detail=False):
         'project_id': ticket.project_id,
         'requester': ticket.requester_label,
         'requester_email': ticket.requester_email,
-        'created_at': _dt(ticket.created_at),
-        'updated_at': _dt(ticket.updated_at),
-        'resolved_at': _dt(ticket.resolved_at),
+        'created_at': _utc(ticket.created_at),
+        'updated_at': _utc(ticket.updated_at),
+        'resolved_at': _utc(ticket.resolved_at),
     }
     if detail:
         data['body'] = ticket.body
@@ -254,6 +270,6 @@ def ticket_dict(ticket, detail=False):
         # a failure needs surfacing with a resend action.
         data['ack_state'] = ticket.ack_state
         data['ack_error'] = ticket.ack_error
-        data['ack_sent_at'] = _dt(ticket.ack_sent_at)
+        data['ack_sent_at'] = _utc(ticket.ack_sent_at)
         data['comments'] = [ticket_comment_dict(c) for c in ticket.comments.all()]
     return data
