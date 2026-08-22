@@ -36,6 +36,10 @@ _REQUEST_COLUMN_DDL = [
     "ALTER TABLE environment_requests ADD COLUMN IF NOT EXISTS git_provider VARCHAR(20)",
     "ALTER TABLE environment_requests ADD COLUMN IF NOT EXISTS repo_url VARCHAR(500)",
     "ALTER TABLE environment_requests ADD COLUMN IF NOT EXISTS git_error TEXT",
+    # Must stay last: chat_conversations is created by create_all(), which
+    # main() runs before this patch.
+    "ALTER TABLE environment_requests ADD COLUMN IF NOT EXISTS "
+    "conversation_id INTEGER REFERENCES chat_conversations(id)",
 ]
 
 

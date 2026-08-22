@@ -7,9 +7,11 @@ from .approval import Approval  # noqa: F401
 from .audit import AuditLog  # noqa: F401
 from .budget import CostRecord  # noqa: F401
 from .secret import ProjectSecret  # noqa: F401
+from .chat import ChatConversation, ChatMessage  # noqa: F401
 
 __all__ = [
     'Role', 'User', 'ProjectMember', 'Project', 'Environment', 'CloudService',
     'EnvironmentRequest', 'RequestService', 'ScheduledJob', 'Approval',
-    'AuditLog', 'CostRecord', 'ProjectSecret',
+    'AuditLog', 'CostRecord', 'ProjectSecret', 'ChatConversation',
+    'ChatMessage',
 ]

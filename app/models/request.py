@@ -55,6 +55,10 @@ class EnvironmentRequest(db.Model):
     estimated_cost = db.Column(db.Float, nullable=True)
     parent_request_id = db.Column(db.Integer, db.ForeignKey('environment_requests.id'),
                                   nullable=True)
+    # The chat conversation that produced this request, if it came from the
+    # agent rather than the form. Lets an approver read the original ask.
+    conversation_id = db.Column(db.Integer, db.ForeignKey('chat_conversations.id'),
+                                nullable=True)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
                            onupdate=lambda: datetime.now(timezone.utc))
