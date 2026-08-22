@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# SQLite database + anything else Flask writes at runtime
+instance/
+
+# Local config — never commit real credentials
+.env
+.env.local
+
+# OS
+.DS_Store
