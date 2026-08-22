@@ -51,6 +51,16 @@ def init_scheduler(app):
             replace_existing=True,
             args=[app],
         )
+        # Registered unconditionally; it self-disables when Graph is not
+        # configured, so an unconfigured deploy costs one no-op call per tick.
+        scheduler.add_job(
+            poll_devops_mailbox,
+            'interval',
+            minutes=app.config.get('MAIL_POLL_MINUTES', 2),
+            id='mail_intake',
+            replace_existing=True,
+            args=[app],
+        )
 
 
 # Python weekday() convention (Mon=0 … Sun=6), matching APScheduler day_of_week tokens.
@@ -450,3 +460,17 @@ def sync_environment_status(app):
                 service.current_status = 'unknown'
 
         db.session.commit()
+
+
+def poll_devops_mailbox(app):
+    """Turn mail sent to the team address into tickets.
+
+    Nothing may escape into APScheduler: a raised exception there is logged in a
+    place nobody reads, and the queue would just quietly stop filling.
+    """
+    with app.app_context():
+        from .ticket_intake import poll_once
+        try:
+            poll_once()
+        except Exception:
+            logger.exception('Mail intake poll failed')
