@@ -180,6 +180,9 @@ def member_dict(member):
         'username': member.user.username,
         'email': member.user.email,
         'role': member.user.role.name,
+        # 'role' above is the user's GLOBAL role; this is what they are on
+        # this project.
+        'project_role': member.project_role,
         'can_view_secrets': bool(member.can_view_secrets),
         'added_by': member.adder.username if member.adder else None,
         'added_at': _dt(member.added_at),

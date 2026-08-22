@@ -50,6 +50,57 @@ def ensure_request_columns():
     print('  schema: environment_requests repo columns ensured')
 
 
+# Added to project_members after the table already shipped. Same reasoning as
+# _REQUEST_COLUMN_DDL above: no Alembic history, so patch the live schema
+# idempotently. Postgres only.
+_MEMBER_COLUMN_DDL = [
+    "ALTER TABLE project_members ADD COLUMN IF NOT EXISTS "
+    "project_role VARCHAR(20) NOT NULL DEFAULT 'developer'",
+]
+
+
+def ensure_member_columns():
+    """Idempotently add the project_role column to an existing table (Postgres)."""
+    if db.engine.dialect.name != 'postgresql':
+        print('  schema: non-postgres, create_all() owns the schema — skipping patch')
+        return
+    with db.engine.begin() as conn:
+        for stmt in _MEMBER_COLUMN_DDL:
+            conn.execute(text(stmt))
+    print('  schema: project_members project_role ensured')
+
+
+def backfill_project_devops():
+    """Give every existing global-devops user project-devops on every project.
+
+    Before this change any devops could approve anything. Without a backfill
+    the upgrade would empty every approval inbox on deploy and strand pending
+    requests. Idempotent: it only adds what is missing, and never demotes.
+    """
+    from app.models.user import ProjectMember
+
+    devops_users = [u for u in User.query.all() if u.role.name == 'devops']
+    if not devops_users:
+        print('  members: no global devops users to backfill')
+        return
+
+    added = promoted = 0
+    for project in Project.query.filter_by(is_active=True).all():
+        for user in devops_users:
+            member = ProjectMember.query.filter_by(
+                project_id=project.id, user_id=user.id).first()
+            if member is None:
+                db.session.add(ProjectMember(
+                    project_id=project.id, user_id=user.id,
+                    added_by=user.id, project_role='devops'))
+                added += 1
+            elif member.project_role != 'devops':
+                member.project_role = 'devops'
+                promoted += 1
+    db.session.commit()
+    print(f'  members: project-devops backfilled ({added} added, {promoted} promoted)')
+
+
 def seed_roles():
     Role.seed()
     print('  roles: developer / devops / admin')
@@ -121,10 +172,13 @@ def main():
         db.create_all()
         print('==> Seeding')
         ensure_request_columns()
+        ensure_member_columns()
         seed_roles()
         seed_admin(app)
         if '--demo' in sys.argv:
             seed_demo()
+        # After the demo projects exist, so they are covered too.
+        backfill_project_devops()
         print('==> Done')
 
 

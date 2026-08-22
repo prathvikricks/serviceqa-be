@@ -90,12 +90,31 @@ class User(UserMixin, db.Model):
         membership = self.project_memberships.filter_by(project_id=project_id).first()
         return bool(membership and membership.can_view_secrets)
 
+    def is_project_devops(self, project_id):
+        """True if this user may approve requests belonging to this project.
+
+        Admins always may — they are the catch-all approver. Everyone else
+        needs an explicit `project_role='devops'` membership: holding the
+        global `devops` role grants operational reach (emergency stop,
+        cross-project visibility) but no longer implies approval rights on a
+        project nobody put you on.
+        """
+        from .project import Project
+        if db.session.get(Project, project_id) is None:
+            return False
+        if self.is_admin:
+            return True
+        membership = self.project_memberships.filter_by(project_id=project_id).first()
+        return bool(membership and membership.project_role == 'devops')
+
     def __repr__(self):
         return f'<User {self.username}>'
 
 
 class ProjectMember(db.Model):
     __tablename__ = 'project_members'
+
+    ROLES = ['developer', 'devops']
 
     id = db.Column(db.Integer, primary_key=True)
     project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=False)
@@ -105,6 +124,11 @@ class ProjectMember(db.Model):
     # Reading its stored secrets is a separate, explicitly-granted permission,
     # so it defaults off — see User.can_view_secrets_of.
     can_view_secrets = db.Column(db.Boolean, default=False, nullable=False)
+    # What this user IS on the project, independent of their global role.
+    # 'devops' is what routes a request's approval here — see
+    # User.is_project_devops. Defaults to 'developer' so adding a member never
+    # silently grants approval rights.
+    project_role = db.Column(db.String(20), default='developer', nullable=False)
     added_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     adder = db.relationship('User', foreign_keys=[added_by])
