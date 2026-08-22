@@ -58,6 +58,21 @@ def ticket_status():
     })
 
 
+@api_bp.route('/tickets/assignees')
+@login_required
+@devops_required
+def ticket_assignees():
+    """Who a ticket may be assigned to.
+
+    Needed because /admin/users is admin-only, but the queue is worked by
+    devops — without this a triager has nothing to populate the picker with.
+    Deliberately narrow: id and username only, no emails or roles.
+    """
+    users = User.query.filter_by(is_active=True).order_by(User.username).all()
+    return jsonify({'assignees': [{'id': u.id, 'username': u.username}
+                                  for u in users if u.is_devops]})
+
+
 @api_bp.route('/tickets')
 @login_required
 @devops_required

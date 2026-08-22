@@ -165,3 +165,24 @@ def test_ticket_timestamps_carry_an_explicit_utc_offset(client, users, ticket):
     login(client, 'ops')
     body = client.get(f'/api/v1/tickets/{ticket.id}').get_json()
     assert body['created_at'].endswith('Z') or '+' in body['created_at']
+
+
+def test_the_assignee_list_offers_only_devops_and_admins(client, users, ticket):
+    """A developer in the picker would let triage assign work nobody can do."""
+    make_user('ops2', 'devops')
+    login(client, 'ops')
+    names = {a['username'] for a in
+             client.get('/api/v1/tickets/assignees').get_json()['assignees']}
+    assert names == {'ops', 'ops2', 'admin'}
+    assert 'dev' not in names
+
+
+def test_the_assignee_list_leaks_no_contact_details(client, users, ticket):
+    login(client, 'ops')
+    body = client.get('/api/v1/tickets/assignees').get_json()
+    assert set(body['assignees'][0]) == {'id', 'username'}
+
+
+def test_a_developer_cannot_read_the_assignee_list(client, users, ticket):
+    login(client, 'dev')
+    assert client.get('/api/v1/tickets/assignees').status_code == 403
