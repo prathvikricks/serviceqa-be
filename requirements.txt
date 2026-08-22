@@ -26,6 +26,9 @@ azure-mgmt-containerservice==31.0.0
 azure-mgmt-resource==23.1.1
 azure-mgmt-rdbms==10.1.0
 
+# --- Chat intake agent (only used when GEMINI_API_KEY is set) ---
+google-genai==1.33.0
+
 # --- Database + serving ---
 psycopg2-binary==2.9.9
 gunicorn==23.0.0

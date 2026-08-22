@@ -187,3 +187,29 @@ def member_dict(member):
         'added_by': member.adder.username if member.adder else None,
         'added_at': _dt(member.added_at),
     }
+
+
+def chat_message_dict(msg):
+    return {
+        'id': msg.id,
+        'role': msg.role,
+        'content': msg.content,
+        'draft': msg.draft,
+        'request_type': msg.request_type,
+        'created_at': _dt(msg.created_at),
+    }
+
+
+def conversation_dict(convo, with_messages=False):
+    data = {
+        'id': convo.id,
+        'project_id': convo.project_id,
+        'project': convo.project.name if convo.project else None,
+        'status': convo.status,
+        'turn_count': convo.turn_count,
+        'max_turns': convo.__class__.MAX_TURNS,
+        'created_at': _dt(convo.created_at),
+    }
+    if with_messages:
+        data['messages'] = [chat_message_dict(m) for m in convo.messages.all()]
+    return data

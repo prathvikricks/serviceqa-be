@@ -55,6 +55,12 @@ class Config:
     # UTC+5:30 arms each job 5½ hours late.
     SCHEDULER_TIMEZONE = os.environ.get('TZ', 'UTC')
 
+    # Chat intake agent (Gemini). Unset => the feature is off: /api/v1/chat/*
+    # returns 503 and the SPA hides the entry point, so the app stays fully
+    # demoable with no credentials, exactly as it is without a cloud account.
+    GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+    GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
+
     # Seed admin — created on first boot if the users table is empty.
     SEED_ADMIN_USERNAME = os.environ.get('SEED_ADMIN_USERNAME', 'admin')
     SEED_ADMIN_EMAIL = os.environ.get('SEED_ADMIN_EMAIL', 'admin@example.com')
