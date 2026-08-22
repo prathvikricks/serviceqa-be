@@ -61,6 +61,33 @@ class Config:
     GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
     GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
 
+    # --- Email-driven DevOps tickets (Microsoft Graph) ---
+    # Entra ID app registration, client-credentials flow, application
+    # permissions Mail.Read + Mail.Send, restricted to DEVOPS_MAILBOX by an
+    # Application Access Policy. Unset any of the first four => intake is off:
+    # the poller no-ops and the SPA hides the queue. Manual tickets still work.
+    #
+    # Deliberately read-only on the mailbox. Processed messages are tracked in
+    # email_intake_messages rather than by flipping isRead, which would need
+    # Mail.ReadWrite and would break the moment a human opens the mail first.
+    GRAPH_TENANT_ID = os.environ.get('GRAPH_TENANT_ID')
+    GRAPH_CLIENT_ID = os.environ.get('GRAPH_CLIENT_ID')
+    GRAPH_CLIENT_SECRET = os.environ.get('GRAPH_CLIENT_SECRET')
+    DEVOPS_MAILBOX = os.environ.get('DEVOPS_MAILBOX')
+
+    # A ticket is created only when this string appears in the email BODY.
+    # Defaults to the mailbox itself.
+    TICKET_TRIGGER_ADDRESS = os.environ.get('TICKET_TRIGGER_ADDRESS') or DEVOPS_MAILBOX
+
+    MAIL_POLL_MINUTES = int(os.environ.get('MAIL_POLL_MINUTES', '2'))
+    # How far back to look on a cold start, and how much to re-scan each poll to
+    # absorb clock skew and out-of-order delivery.
+    MAIL_INTAKE_LOOKBACK_MINUTES = int(os.environ.get('MAIL_INTAKE_LOOKBACK_MINUTES', '60'))
+    MAIL_INTAKE_OVERLAP_MINUTES = int(os.environ.get('MAIL_INTAKE_OVERLAP_MINUTES', '10'))
+    # Outbound acknowledgement. Off by default: this sends mail to real people
+    # as the DevOps team, so it stays dark until the queue has been watched.
+    TICKET_ACK_ENABLED = os.environ.get('TICKET_ACK_ENABLED', '0') == '1'
+
     # Seed admin — created on first boot if the users table is empty.
     SEED_ADMIN_USERNAME = os.environ.get('SEED_ADMIN_USERNAME', 'admin')
     SEED_ADMIN_EMAIL = os.environ.get('SEED_ADMIN_EMAIL', 'admin@example.com')

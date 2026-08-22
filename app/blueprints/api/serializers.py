@@ -213,3 +213,47 @@ def conversation_dict(convo, with_messages=False):
     if with_messages:
         data['messages'] = [chat_message_dict(m) for m in convo.messages.all()]
     return data
+
+
+def ticket_comment_dict(comment):
+    return {
+        'id': comment.id,
+        'author': comment.author.username if comment.author else None,
+        'author_id': comment.author_id,
+        'body': comment.body,
+        'is_system': bool(comment.is_system),
+        'created_at': _dt(comment.created_at),
+    }
+
+
+def ticket_dict(ticket, detail=False):
+    """List form omits the body — a 60KB email times 20 rows is not a list payload."""
+    data = {
+        'id': ticket.id,
+        'reference': ticket.reference,
+        'title': ticket.title,
+        'summary': ticket.summary,
+        'category': ticket.category,
+        'urgency': ticket.urgency,
+        'status': ticket.status,
+        'source': ticket.source,
+        'enriched_by': ticket.enriched_by,
+        'assignee': ticket.assignee.username if ticket.assignee else None,
+        'assignee_id': ticket.assignee_id,
+        'project': ticket.project.name if ticket.project else None,
+        'project_id': ticket.project_id,
+        'requester': ticket.requester_label,
+        'requester_email': ticket.requester_email,
+        'created_at': _dt(ticket.created_at),
+        'updated_at': _dt(ticket.updated_at),
+        'resolved_at': _dt(ticket.resolved_at),
+    }
+    if detail:
+        data['body'] = ticket.body
+        # Acknowledgement state is only interesting on the ticket itself, where
+        # a failure needs surfacing with a resend action.
+        data['ack_state'] = ticket.ack_state
+        data['ack_error'] = ticket.ack_error
+        data['ack_sent_at'] = _dt(ticket.ack_sent_at)
+        data['comments'] = [ticket_comment_dict(c) for c in ticket.comments.all()]
+    return data
