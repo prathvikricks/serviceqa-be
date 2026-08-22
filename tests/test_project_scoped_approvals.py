@@ -135,3 +135,43 @@ def test_devops_with_no_project_role_sees_an_empty_inbox(client, project, users)
 def test_plain_developer_is_denied_the_approvals_list(client, project, users):
     login(client, 'dev')
     assert client.get('/api/v1/approvals').status_code == 403
+
+
+# --- per-request approval checks --------------------------------------------
+
+def test_cannot_approve_another_projects_request_by_id(client, project, users):
+    other = _second_project(users)
+    theirs = _service_request(other.environments.first().id, users['dev'].id)
+
+    ops = make_user('ops2', 'devops')
+    _member(project, ops, 'devops')
+
+    login(client, 'ops2')
+    assert client.post(f'/api/v1/approvals/{theirs.id}/approve',
+                       json={'comment': 'sneaking in'}).status_code == 403
+    assert client.post(f'/api/v1/approvals/{theirs.id}/decline',
+                       json={'comment': 'sneaking in'}).status_code == 403
+
+
+def test_cannot_approve_another_projects_repo_request_by_id(client, project, users):
+    other = _second_project(users)
+    theirs = _repo_request(other.id, users['dev'].id)
+
+    ops = make_user('ops2', 'devops')
+    _member(project, ops, 'devops')
+
+    login(client, 'ops2')
+    assert client.post(f'/api/v1/approvals/{theirs.id}/approve',
+                       json={'provider': 'github'}).status_code == 403
+
+
+def test_project_devops_can_approve_their_own_projects_request(client, project, users):
+    mine = _service_request(project.environments.first().id, users['dev'].id)
+
+    ops = make_user('ops2', 'devops')
+    _member(project, ops, 'devops')
+
+    login(client, 'ops2')
+    resp = client.post(f'/api/v1/approvals/{mine.id}/approve', json={'comment': 'ok'})
+    assert resp.status_code == 200
+    assert db.session.get(EnvironmentRequest, mine.id).status != 'pending'

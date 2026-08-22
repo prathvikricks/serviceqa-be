@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from app.extensions import db
 from app.models.request import EnvironmentRequest
 from app.models.environment import CloudService
+from app.models.user import ProjectMember
 from app.services.scheduler_service import _start_environment, _stop_environment
 
 from conftest import login
@@ -12,6 +13,18 @@ from conftest import login
 
 def _env_id(project):
     return project.environments.first().id
+
+
+def _make_approver(project, user):
+    """Approval is project-scoped: a devops must be on the project to act on it."""
+    member = project.members.filter_by(user_id=user.id).first()
+    if member is None:
+        member = ProjectMember(project_id=project.id, user_id=user.id,
+                               added_by=user.id)
+        db.session.add(member)
+    member.project_role = 'devops'
+    db.session.commit()
+    return member
 
 
 def _reload(model, pk):
@@ -67,6 +80,7 @@ def test_approve_then_start_and_stop_flips_service_status(client, app, project, 
     }).get_json()['id']
 
     client.post('/api/v1/auth/logout')
+    _make_approver(project, users['devops'])
     login(client, 'ops')
     resp = client.post(f'/api/v1/approvals/{rid}/approve', json={'comment': 'ok'})
     assert resp.status_code == 200
@@ -94,6 +108,7 @@ def test_declined_request_never_schedules(client, app, project, users):
     }).get_json()['id']
 
     client.post('/api/v1/auth/logout')
+    _make_approver(project, users['devops'])
     login(client, 'ops')
     client.post(f'/api/v1/approvals/{rid}/decline', json={'comment': 'use dev'})
 

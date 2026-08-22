@@ -30,6 +30,18 @@ def _approvable_project_ids(user):
             user.project_memberships.filter_by(project_role='devops').all()]
 
 
+def _require_project_approver(env_request):
+    """403 unless the caller may approve this specific request.
+
+    Scoping the list is not enough on its own — without this a devops could
+    act on any other project's request by guessing its id.
+    """
+    project = env_request.project
+    if project is None or not current_user.is_project_devops(project.id):
+        return jsonify({'error': 'You do not approve requests on this project.'}), 403
+    return None
+
+
 @api_bp.route('/approvals')
 @login_required
 @devops_required
@@ -123,6 +135,10 @@ def _approve_repo_request(env_request, comment):
 def approve(request_id):
     env_request = _get_or_404(EnvironmentRequest, request_id)
 
+    denied = _require_project_approver(env_request)
+    if denied:
+        return denied
+
     data = request.get_json(silent=True) or {}
     comment = (data.get('comment') or '').strip()
 
@@ -164,6 +180,10 @@ def approve(request_id):
 @devops_required
 def decline(request_id):
     env_request = _get_or_404(EnvironmentRequest, request_id)
+
+    denied = _require_project_approver(env_request)
+    if denied:
+        return denied
 
     if env_request.status != 'pending':
         return jsonify({'error': 'This request is no longer pending'}), 400
