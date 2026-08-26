@@ -1,10 +1,15 @@
 FROM python:3.12-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
     gcc libpq-dev curl && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+
+# pip and setuptools ship in the base image and are both flagged by the
+# scanner — patch them before installing deps.
+RUN pip install --no-cache-dir --upgrade pip setuptools
 
 # Dependencies first so code edits don't bust the pip layer.
 COPY requirements.txt .
