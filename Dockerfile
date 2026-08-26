@@ -13,7 +13,12 @@ RUN pip install --no-cache-dir --upgrade pip setuptools
 
 # Dependencies first so code edits don't bust the pip layer.
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Runtime needs none of pip's machinery once deps are installed. Uninstalling
+# pip in the same layer drops its vendored bundle (pip/_vendor), which is the
+# only place Trivy still finds vulnerable msgpack 1.1.2 / setuptools 70.3.0 —
+# the real installed setuptools (84.0.0) is already patched and stays.
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip uninstall -y pip
 
 COPY . .
 
