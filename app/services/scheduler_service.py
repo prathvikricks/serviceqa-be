@@ -61,6 +61,16 @@ def init_scheduler(app):
             replace_existing=True,
             args=[app],
         )
+        # Pull CVEs from OSV.dev for the tracked packages. Self-guards on the
+        # VULN_SCAN_ENABLED flag; "Scan now" in the UI bypasses this schedule.
+        scheduler.add_job(
+            run_vuln_scan,
+            'interval',
+            hours=app.config.get('VULN_SCAN_INTERVAL_HOURS', 24),
+            id='vuln_scan',
+            replace_existing=True,
+            args=[app],
+        )
 
 
 # Python weekday() convention (Mon=0 … Sun=6), matching APScheduler day_of_week tokens.
@@ -474,3 +484,21 @@ def poll_devops_mailbox(app):
             poll_once()
         except Exception:
             logger.exception('Mail intake poll failed')
+
+
+def run_vuln_scan(app):
+    """Pull the latest CVEs from OSV.dev into the vulnerabilities table.
+
+    Same contract as poll_devops_mailbox: everything runs inside an app context
+    and nothing escapes into APScheduler, or the scan would silently stop.
+    """
+    with app.app_context():
+        from .vuln_scan import scan_all, scan_enabled
+        if not scan_enabled():
+            return
+        try:
+            summary = scan_all()
+            logger.info('Vuln scan complete: %s created, %s updated across %s sources',
+                        summary['created'], summary['updated'], summary['sources'])
+        except Exception:
+            logger.exception('Vulnerability scan failed')

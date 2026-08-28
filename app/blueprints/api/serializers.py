@@ -248,6 +248,45 @@ def ticket_comment_dict(comment):
     }
 
 
+def vulnerability_dict(v, detail=False):
+    """List form omits the description — long advisory text times many rows is
+    not a list payload (the same reason ticket_dict omits body)."""
+    data = {
+        'id': v.id,
+        'source': v.source,
+        'technology': v.technology,
+        'cve_id': v.cve_id,
+        'severity': v.severity,
+        'url': v.url,
+        'affected_version': v.affected_version,
+        'fixed_version': v.fixed_version,
+        # Written with datetime.now(timezone.utc) into naive columns, so _utc
+        # (not _dt) so the browser reads them as UTC rather than local.
+        'published': _utc(v.published),
+        'first_seen': _utc(v.first_seen),
+        'acknowledged': bool(v.acknowledged),
+        'acknowledged_at': _utc(v.acknowledged_at),
+        'acknowledged_by': v.acknowledger.username if v.acknowledger else None,
+    }
+    if detail:
+        data['description'] = v.description
+        data['last_seen'] = _utc(v.last_seen)
+    return data
+
+
+def vuln_source_status_dict(s):
+    return {
+        'source': s.source,
+        'technology': s.technology,
+        'ecosystem': s.ecosystem,
+        'package': s.package,
+        'status': s.status,
+        'last_scanned_at': _utc(s.last_scanned_at),
+        'found_count': s.found_count,
+        'error': s.error,
+    }
+
+
 def ticket_dict(ticket, detail=False):
     """List form omits the body — a 60KB email times 20 rows is not a list payload."""
     data = {
