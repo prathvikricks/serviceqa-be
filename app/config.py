@@ -88,6 +88,25 @@ class Config:
     # as the DevOps team, so it stays dark until the queue has been watched.
     TICKET_ACK_ENABLED = os.environ.get('TICKET_ACK_ENABLED', '0') == '1'
 
+    # --- Vulnerability listing (OSV.dev) ---
+    # Ported from the standalone VulnWatch service. CVEs are pulled live from the
+    # OSV.dev API for the packages in VULN_SOURCES_PATH; OSV needs no credentials,
+    # so scanning is on by default and this flag is only an off switch.
+    VULN_SCAN_ENABLED = os.environ.get('VULN_SCAN_ENABLED', '1') == '1'
+    VULN_SOURCES_PATH = (os.environ.get('VULN_SOURCES_PATH')
+                         or os.path.join(basedir, 'services', 'vuln_sources.json'))
+    # How often the background scan runs. The "Scan now" button bypasses this.
+    VULN_SCAN_INTERVAL_HOURS = int(os.environ.get('VULN_SCAN_INTERVAL_HOURS', '24'))
+    # Per-source cap. Django alone returns hundreds of findings; bound the pull so
+    # one noisy package can't dominate a scan.
+    VULN_MAX_PER_SOURCE = int(os.environ.get('VULN_MAX_PER_SOURCE', '200'))
+    # NVD keyword sources (WordPress, Linux, Windows). NVD works without a key but
+    # is rate-limited to 5 requests/30s, which makes a multi-source scan slow — set
+    # a free key (https://nvd.nist.gov/developers/request-an-api-key) to speed it up.
+    NVD_API_KEY = os.environ.get('NVD_API_KEY')
+    # Newest CVEs to keep per NVD keyword source per scan.
+    VULN_NVD_MAX = int(os.environ.get('VULN_NVD_MAX', '20'))
+
     # Seed admin — created on first boot if the users table is empty.
     SEED_ADMIN_USERNAME = os.environ.get('SEED_ADMIN_USERNAME', 'admin')
     SEED_ADMIN_EMAIL = os.environ.get('SEED_ADMIN_EMAIL', 'admin@example.com')

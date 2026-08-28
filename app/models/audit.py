@@ -31,6 +31,7 @@ class AuditLog(db.Model):
         'password_reset_requested', 'password_reset', 'password_changed',
         'email_verified', 'profile_updated',
         'invite_created', 'invite_resent', 'invite_revoked', 'invite_accepted',
+        'vuln_scan_run', 'vuln_acknowledged', 'vuln_unacknowledged',
     ]
 
     @staticmethod

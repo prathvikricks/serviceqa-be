@@ -1,0 +1,53 @@
+{
+  "sources": [
+    {
+      "name": "trivy",
+      "technology": "Trivy",
+      "type": "osv",
+      "ecosystem": "Go",
+      "package": "github.com/aquasecurity/trivy"
+    },
+    {
+      "name": "argocd",
+      "technology": "ArgoCD",
+      "type": "osv",
+      "ecosystem": "Go",
+      "package": "github.com/argoproj/argo-cd/v2"
+    },
+    {
+      "name": "django",
+      "technology": "Django",
+      "type": "osv",
+      "ecosystem": "PyPI",
+      "package": "Django"
+    },
+    {
+      "name": "springboot",
+      "technology": "Spring Boot",
+      "type": "osv",
+      "ecosystem": "Maven",
+      "package": "org.springframework.boot:spring-boot"
+    },
+    {
+      "name": "wordpress",
+      "technology": "WordPress",
+      "type": "nvd",
+      "keyword": "wordpress",
+      "min_severity": "medium"
+    },
+    {
+      "name": "linux_kernel",
+      "technology": "Linux Kernel",
+      "type": "nvd",
+      "keyword": "linux kernel",
+      "min_severity": "high"
+    },
+    {
+      "name": "windows",
+      "technology": "Microsoft Windows",
+      "type": "nvd",
+      "keyword": "microsoft windows",
+      "min_severity": "high"
+    }
+  ]
+}

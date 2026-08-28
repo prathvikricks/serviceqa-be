@@ -14,3 +14,4 @@ from . import secrets     # noqa: E402, F401
 from . import chat        # noqa: E402, F401
 from . import tickets     # noqa: E402, F401
 from . import settings    # noqa: E402, F401
+from . import vulnerabilities  # noqa: E402, F401
