@@ -21,6 +21,14 @@ from .chat_validation import validate_draft
 
 logger = logging.getLogger(__name__)
 
+# A hung Gemini call must not tie up the single gunicorn worker — same rationale
+# as git_manager's and graph_mail's timeouts. This MUST stay comfortably under
+# gunicorn's --timeout (120s): a call that runs to the worker timeout gets the
+# whole worker killed and respawned, which drops every other in-flight request
+# with no HTTP response — the browser then reports those as spurious "CORS
+# errors". Timing out here instead surfaces a clean 502.
+_TIMEOUT = 60  # seconds
+
 
 class AgentUnavailable(Exception):
     """The feature is not configured."""
@@ -117,7 +125,11 @@ def _client():
         from google import genai
     except ImportError as exc:   # pragma: no cover - depends on the deploy
         raise AgentUnavailable('google-genai is not installed.') from exc
-    return genai.Client(api_key=api_key())
+    # http_options.timeout is milliseconds. Caps every request off this client.
+    return genai.Client(
+        api_key=api_key(),
+        http_options={'timeout': _TIMEOUT * 1000},
+    )
 
 
 # Models that advertise generateContent but cannot hold a JSON conversation:
