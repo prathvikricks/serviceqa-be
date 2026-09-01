@@ -93,6 +93,38 @@ class AWSManager(CloudManager):
         response = client.get_secret_value(SecretId=secret_id)
         return response.get('SecretString') or ''
 
+    def describe_secret(self, secret_id: str, region=None) -> dict:
+        """Metadata for one secret (no value). Returns
+        ``{'name', 'arn', 'description', 'last_changed'}``."""
+        client = self._get_client('secretsmanager', region)
+        resp = client.describe_secret(SecretId=secret_id)
+        changed = resp.get('LastChangedDate')
+        return {
+            'name': resp.get('Name', ''),
+            'arn': resp.get('ARN', ''),
+            'description': resp.get('Description') or None,
+            'last_changed': changed.isoformat() if changed else None,
+        }
+
+    def create_secret(self, name: str, value: str, description=None, region=None) -> dict:
+        """Create a new secret. Returns ``{'name', 'arn'}``."""
+        client = self._get_client('secretsmanager', region)
+        kwargs = {'Name': name, 'SecretString': value}
+        if description:
+            kwargs['Description'] = description
+        resp = client.create_secret(**kwargs)
+        return {'name': resp.get('Name', name), 'arn': resp.get('ARN', '')}
+
+    def put_secret_value(self, secret_id: str, value: str, region=None) -> None:
+        """Store a new value on an existing secret (creates a new version)."""
+        client = self._get_client('secretsmanager', region)
+        client.put_secret_value(SecretId=secret_id, SecretString=value)
+
+    def update_secret_description(self, secret_id: str, description: str, region=None) -> None:
+        """Change a secret's description without touching its value."""
+        client = self._get_client('secretsmanager', region)
+        client.update_secret(SecretId=secret_id, Description=description or '')
+
     def list_resources(self, service_type: str, resource_group: str = None,
                        region: str = None) -> list:
         dispatch = {

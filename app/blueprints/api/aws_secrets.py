@@ -41,6 +41,16 @@ def _region_from_arn(arn):
     return parts[3] if len(parts) > 3 else ''
 
 
+def _mappings_for_arn(arn):
+    """All project mappings for one AWS secret, for the central/detail views."""
+    rows = ProjectAwsSecret.query.filter_by(aws_arn=arn).all()
+    return [{
+        'assoc_id': a.id, 'project_id': a.project_id,
+        'project_name': a.project.name if a.project else None,
+        'scope': a.scope_label,
+    } for a in rows]
+
+
 def aws_secret_dict(assoc, can_reveal=False):
     """One mapping as seen through a project. ``id`` is the mapping id — what
     reveal and dissociate operate on."""
@@ -137,6 +147,115 @@ def reveal_aws_secret_admin():
         logger.warning('AWS secret reveal failed for %s: %s', aws_arn, exc)
         return jsonify({'error': f'Could not read the secret from AWS: {exc}'}), 502
     return jsonify({'aws_arn': aws_arn, 'value': value})
+
+
+@api_bp.route('/admin/aws-secrets/detail')
+@login_required
+@admin_required
+def aws_secret_detail():
+    """One AWS secret's metadata (no value) plus where it's mapped."""
+    aws_arn = strip(request.args.get('arn'))
+    if not aws_arn:
+        return jsonify({'error': 'arn is required.'}), 400
+    if not secrets_manager.is_enabled():
+        return jsonify({'error': 'AWS Secrets Manager is not configured.',
+                        'configured': False}), 409
+    region = strip(request.args.get('region')) or _region_from_arn(aws_arn) or None
+    try:
+        meta = secrets_manager.get_manager().describe_secret(aws_arn, region=region)
+    except Exception as exc:
+        logger.warning('AWS describe failed for %s: %s', aws_arn, exc)
+        return jsonify({'error': f'Could not read the secret from AWS: {exc}'}), 502
+    return jsonify({
+        'aws_arn': meta['arn'] or aws_arn,
+        'aws_name': meta['name'],
+        'aws_region': _region_from_arn(meta['arn'] or aws_arn) or region,
+        'description': meta['description'],
+        'last_changed': meta['last_changed'],
+        'mappings': _mappings_for_arn(meta['arn'] or aws_arn),
+    })
+
+
+@api_bp.route('/admin/aws-secrets', methods=['POST'])
+@login_required
+@admin_required
+def create_aws_secret():
+    """Create a brand-new secret in AWS Secrets Manager."""
+    if not secrets_manager.is_enabled():
+        return jsonify({'error': 'AWS Secrets Manager is not configured.',
+                        'configured': False}), 409
+    data = request.get_json(silent=True) or {}
+    name = strip(data.get('name'))
+    value = data.get('value') or ''
+    description = strip(data.get('description')) or None
+    region = strip(data.get('region')) or secrets_manager.default_region()
+    if not name:
+        return jsonify({'error': 'A name is required.'}), 400
+    if not value:
+        return jsonify({'error': 'A value is required.'}), 400
+
+    try:
+        created = secrets_manager.get_manager().create_secret(
+            name, value, description=description, region=region)
+    except Exception as exc:
+        logger.warning('AWS create secret failed for %s: %s', name, exc)
+        return jsonify({'error': f'Could not create the secret in AWS: {exc}'}), 502
+
+    AuditLog.log('aws_secret_created', 'aws_secret', None,
+                 user_id=current_user.id, ip_address=request.remote_addr,
+                 details={'aws_name': created['name']})
+    return jsonify({'aws_arn': created['arn'], 'aws_name': created['name'],
+                    'aws_region': region}), 201
+
+
+@api_bp.route('/admin/aws-secrets', methods=['PUT'])
+@login_required
+@admin_required
+def update_aws_secret():
+    """Edit an existing secret's value and/or description in AWS.
+
+    Blank ``value`` leaves the value unchanged (same convention as project
+    secrets); ``description`` is written whenever the key is present."""
+    if not secrets_manager.is_enabled():
+        return jsonify({'error': 'AWS Secrets Manager is not configured.',
+                        'configured': False}), 409
+    data = request.get_json(silent=True) or {}
+    aws_arn = strip(data.get('aws_arn'))
+    if not aws_arn:
+        return jsonify({'error': 'aws_arn is required.'}), 400
+    region = strip(data.get('region')) or _region_from_arn(aws_arn) or None
+    value = data.get('value')
+    has_description = 'description' in data
+
+    if not value and not has_description:
+        return jsonify({'error': 'Nothing to update.'}), 400
+
+    manager = secrets_manager.get_manager()
+    try:
+        if value:
+            manager.put_secret_value(aws_arn, value, region=region)
+            AuditLog.log('aws_secret_value_updated', 'aws_secret', None,
+                         user_id=current_user.id, ip_address=request.remote_addr,
+                         details={'aws_arn': aws_arn})
+        if has_description:
+            manager.update_secret_description(
+                aws_arn, strip(data.get('description')), region=region)
+            AuditLog.log('aws_secret_description_updated', 'aws_secret', None,
+                         user_id=current_user.id, ip_address=request.remote_addr,
+                         details={'aws_arn': aws_arn})
+        meta = manager.describe_secret(aws_arn, region=region)
+    except Exception as exc:
+        logger.warning('AWS update failed for %s: %s', aws_arn, exc)
+        return jsonify({'error': f'Could not update the secret in AWS: {exc}'}), 502
+
+    return jsonify({
+        'aws_arn': meta['arn'] or aws_arn,
+        'aws_name': meta['name'],
+        'aws_region': _region_from_arn(meta['arn'] or aws_arn) or region,
+        'description': meta['description'],
+        'last_changed': meta['last_changed'],
+        'mappings': _mappings_for_arn(meta['arn'] or aws_arn),
+    })
 
 
 # ---------------------------------------------------------------------------

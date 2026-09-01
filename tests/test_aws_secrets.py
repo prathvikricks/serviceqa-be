@@ -251,3 +251,131 @@ def test_status_aws_not_configured_when_no_creds(client, users):
     aws = client.get('/api/v1/admin/settings/status').get_json()['aws']
     assert aws['configured'] is False
     assert aws['reachable'] is False
+
+
+# --- detail page -----------------------------------------------------------
+
+def _stub_describe(monkeypatch, description='db', last_changed=None):
+    monkeypatch.setattr(
+        aws_manager.AWSManager, 'describe_secret',
+        lambda self, secret_id, region=None: {
+            'name': 'demo/DB_PASSWORD', 'arn': ARN,
+            'description': description, 'last_changed': last_changed})
+
+
+def test_detail_returns_metadata_and_mappings(
+        client, project, aws_configured, monkeypatch):
+    _stub_aws(monkeypatch)
+    _stub_describe(monkeypatch)
+    login(client, 'admin')
+    _associate(client, project)
+
+    resp = client.get(f'/api/v1/admin/aws-secrets/detail?arn={ARN}')
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body['aws_name'] == 'demo/DB_PASSWORD'
+    assert body['aws_region'] == 'us-east-1'
+    assert 'value' not in body
+    assert len(body['mappings']) == 1
+    assert body['mappings'][0]['project_id'] == project.id
+
+
+def test_detail_requires_admin(client, aws_configured, users, monkeypatch):
+    _stub_describe(monkeypatch)
+    for username in ('dev', 'ops'):
+        login(client, username)
+        assert client.get(f'/api/v1/admin/aws-secrets/detail?arn={ARN}').status_code == 403
+        client.post('/api/v1/auth/logout')
+
+
+# --- create ----------------------------------------------------------------
+
+def test_create_secret_calls_aws_and_audits(client, aws_configured, users, monkeypatch):
+    seen = {}
+
+    def fake_create(self, name, value, description=None, region=None):
+        seen.update(name=name, value=value, description=description, region=region)
+        return {'name': name, 'arn': ARN}
+    monkeypatch.setattr(aws_manager.AWSManager, 'create_secret', fake_create)
+
+    login(client, 'admin')
+    resp = client.post('/api/v1/admin/aws-secrets',
+                       json={'name': 'demo/NEW', 'value': 'sekret', 'description': 'x'})
+    assert resp.status_code == 201, resp.get_json()
+    assert seen['name'] == 'demo/NEW' and seen['value'] == 'sekret'
+    assert 'sekret' not in resp.get_data(as_text=True)
+
+    entry = AuditLog.query.filter_by(action='aws_secret_created').first()
+    assert entry is not None
+    assert 'sekret' not in str(entry.details)
+
+
+def test_create_requires_name_and_value(client, aws_configured, users, monkeypatch):
+    monkeypatch.setattr(aws_manager.AWSManager, 'create_secret',
+                        lambda self, name, value, description=None, region=None: {})
+    login(client, 'admin')
+    assert client.post('/api/v1/admin/aws-secrets',
+                       json={'name': '', 'value': 'v'}).status_code == 400
+    assert client.post('/api/v1/admin/aws-secrets',
+                       json={'name': 'n', 'value': ''}).status_code == 400
+
+
+def test_create_aws_failure_is_502(client, aws_configured, users, monkeypatch):
+    def boom(self, name, value, description=None, region=None):
+        raise RuntimeError('ResourceExistsException')
+    monkeypatch.setattr(aws_manager.AWSManager, 'create_secret', boom)
+    login(client, 'admin')
+    resp = client.post('/api/v1/admin/aws-secrets', json={'name': 'x', 'value': 'y'})
+    assert resp.status_code == 502
+    assert 'Could not create' in resp.get_json()['error']
+
+
+# --- edit value / description ----------------------------------------------
+
+def test_edit_value_calls_put(client, aws_configured, users, monkeypatch):
+    calls = []
+    monkeypatch.setattr(aws_manager.AWSManager, 'put_secret_value',
+                        lambda self, sid, value, region=None: calls.append(value))
+    _stub_describe(monkeypatch)
+    login(client, 'admin')
+    resp = client.put('/api/v1/admin/aws-secrets', json={'aws_arn': ARN, 'value': 'v2'})
+    assert resp.status_code == 200
+    assert calls == ['v2']
+
+    entry = AuditLog.query.filter_by(action='aws_secret_value_updated').first()
+    assert entry is not None
+    assert 'v2' not in str(entry.details)
+
+
+def test_edit_blank_value_does_not_call_put(client, aws_configured, users, monkeypatch):
+    calls = []
+    monkeypatch.setattr(aws_manager.AWSManager, 'put_secret_value',
+                        lambda self, sid, value, region=None: calls.append(value))
+    upd = []
+    monkeypatch.setattr(aws_manager.AWSManager, 'update_secret_description',
+                        lambda self, sid, desc, region=None: upd.append(desc))
+    _stub_describe(monkeypatch)
+    login(client, 'admin')
+    # Only a description change; value left blank.
+    resp = client.put('/api/v1/admin/aws-secrets',
+                      json={'aws_arn': ARN, 'value': '', 'description': 'new desc'})
+    assert resp.status_code == 200
+    assert calls == []
+    assert upd == ['new desc']
+
+
+def test_update_requires_something(client, aws_configured, users, monkeypatch):
+    _stub_describe(monkeypatch)
+    login(client, 'admin')
+    resp = client.put('/api/v1/admin/aws-secrets', json={'aws_arn': ARN})
+    assert resp.status_code == 400
+
+
+def test_write_endpoints_require_admin(client, aws_configured, users, monkeypatch):
+    for username in ('dev', 'ops'):
+        login(client, username)
+        assert client.post('/api/v1/admin/aws-secrets',
+                           json={'name': 'n', 'value': 'v'}).status_code == 403
+        assert client.put('/api/v1/admin/aws-secrets',
+                          json={'aws_arn': ARN, 'value': 'v'}).status_code == 403
+        client.post('/api/v1/auth/logout')
