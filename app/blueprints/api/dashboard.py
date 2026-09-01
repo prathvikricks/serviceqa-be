@@ -14,9 +14,13 @@ from .serializers import request_dict, scheduled_job_dict
 
 
 def _scoped(query):
-    """Developers only see their own requests; devops/admin see everything."""
+    """Developers only see their own requests; devops/admin see everything.
+
+    Filters on the explicit EnvironmentRequest column (not filter_by, which binds
+    to the query's primary entity) so it works even when ER is only joined in —
+    e.g. the top-environments aggregate whose primary entity is Environment."""
     if current_user.is_developer:
-        return query.filter_by(requester_id=current_user.id)
+        return query.filter(EnvironmentRequest.requester_id == current_user.id)
     return query
 
 
