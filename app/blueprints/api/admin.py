@@ -622,3 +622,18 @@ def admin_user_edit(uid):
     AuditLog.log('user_updated', 'user', user.id,
                  user_id=current_user.id, ip_address=request.remote_addr)
     return jsonify(user_dict(user))
+
+
+@api_bp.route('/admin/users/<int:uid>/reset-mfa', methods=['POST'])
+@login_required
+@admin_required
+def admin_user_reset_mfa(uid):
+    """Clear a user's MFA so they re-enroll (new QR) on their next login —
+    the recovery path when someone loses their authenticator device."""
+    user = _get_or_404(User, uid)
+    user.mfa_enabled = False
+    user.totp_secret = None
+    db.session.commit()
+    AuditLog.log('mfa_reset', 'user', user.id,
+                 user_id=current_user.id, ip_address=request.remote_addr)
+    return jsonify(user_dict(user))

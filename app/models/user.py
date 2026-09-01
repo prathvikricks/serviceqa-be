@@ -32,6 +32,10 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(256), nullable=False)
     role_id = db.Column(db.Integer, db.ForeignKey('roles.id'), nullable=False)
     is_active = db.Column(db.Boolean, default=True)
+    # TOTP MFA. mfa_enabled flips true only once a code is confirmed; totp_secret
+    # is the Fernet-encrypted base32 seed (same crypto boundary as everything else).
+    mfa_enabled = db.Column(db.Boolean, default=False, nullable=False)
+    totp_secret = db.Column(db.String(255), nullable=True)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
@@ -44,6 +48,30 @@ class User(UserMixin, db.Model):
 
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+
+    # --- TOTP MFA ----------------------------------------------------------
+    # The base32 seed is encrypted at rest; verify_totp accepts a small window
+    # so a code that ticks over mid-request still validates.
+
+    def set_totp_secret(self, base32_secret):
+        from ..services.crypto import encrypt
+        self.totp_secret = encrypt(base32_secret or '')
+
+    def get_totp_secret(self):
+        from ..services.crypto import decrypt
+        if not self.totp_secret:
+            return ''
+        try:
+            return decrypt(self.totp_secret)
+        except Exception:
+            return ''
+
+    def verify_totp(self, code):
+        import pyotp
+        secret = self.get_totp_secret()
+        if not secret or not code:
+            return False
+        return pyotp.TOTP(secret).verify(str(code).strip(), valid_window=1)
 
     @property
     def is_admin(self):
