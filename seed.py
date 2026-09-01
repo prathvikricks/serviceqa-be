@@ -74,6 +74,26 @@ def ensure_member_columns():
     print('  schema: project_members project_role ensured')
 
 
+# Added to users when TOTP MFA shipped. Same reasoning as the patches above:
+# no Alembic history, so patch the live schema idempotently. Postgres only.
+_USER_COLUMN_DDL = [
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+    "mfa_enabled BOOLEAN NOT NULL DEFAULT false",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret VARCHAR(255)",
+]
+
+
+def ensure_user_columns():
+    """Idempotently add the MFA columns to an existing table (Postgres)."""
+    if db.engine.dialect.name != 'postgresql':
+        print('  schema: non-postgres, create_all() owns the schema — skipping patch')
+        return
+    with db.engine.begin() as conn:
+        for stmt in _USER_COLUMN_DDL:
+            conn.execute(text(stmt))
+    print('  schema: users MFA columns ensured')
+
+
 def backfill_project_devops():
     """Give every existing global-devops user project-devops on every project.
 
@@ -177,6 +197,7 @@ def main():
         print('==> Seeding')
         ensure_request_columns()
         ensure_member_columns()
+        ensure_user_columns()
         seed_roles()
         seed_admin(app)
         if '--demo' in sys.argv:

@@ -14,9 +14,13 @@ from .serializers import request_dict, scheduled_job_dict
 
 
 def _scoped(query):
-    """Developers only see their own requests; devops/admin see everything."""
+    """Developers only see their own requests; devops/admin see everything.
+
+    Filters on the explicit EnvironmentRequest column (not filter_by, which binds
+    to the query's primary entity) so it works even when ER is only joined in —
+    e.g. the top-environments aggregate whose primary entity is Environment."""
     if current_user.is_developer:
-        return query.filter_by(requester_id=current_user.id)
+        return query.filter(EnvironmentRequest.requester_id == current_user.id)
     return query
 
 
@@ -102,9 +106,13 @@ def analytics():
                          .group_by(ER.action_type)).all()]
 
     # Cost by month — prefer recorded costs; fall back to estimated by month.
-    cost_rows = (db.session.query(CostRecord.month, db.func.sum(CostRecord.cost))
-                 .group_by(CostRecord.month).order_by(CostRecord.month.desc())
-                 .limit(6).all())
+    # Scope to the developer's own requests so their cost chart isn't cross-tenant.
+    cost_q = db.session.query(CostRecord.month, db.func.sum(CostRecord.cost))
+    if current_user.is_developer:
+        cost_q = (cost_q.join(ER, ER.id == CostRecord.request_id)
+                  .filter(ER.requester_id == current_user.id))
+    cost_rows = (cost_q.group_by(CostRecord.month)
+                 .order_by(CostRecord.month.desc()).limit(6).all())
     if cost_rows and any((c or 0) > 0 for _, c in cost_rows):
         cost_by_month = [{'month': m, 'cost': round(float(c or 0), 2)}
                          for m, c in reversed(cost_rows)]

@@ -11,6 +11,7 @@ from . import approvals  # noqa: E402, F401
 from . import admin      # noqa: E402, F401
 from . import reports     # noqa: E402, F401
 from . import secrets     # noqa: E402, F401
+from . import aws_secrets  # noqa: E402, F401
 from . import chat        # noqa: E402, F401
 from . import tickets     # noqa: E402, F401
 from . import settings    # noqa: E402, F401

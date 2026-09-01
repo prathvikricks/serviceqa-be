@@ -24,6 +24,7 @@ def user_dict(user):
         'is_admin': user.is_admin,
         'is_devops': user.is_devops,
         'is_developer': user.is_developer,
+        'mfa_enabled': user.mfa_enabled,
         'created_at': _dt(user.created_at),
     }
 

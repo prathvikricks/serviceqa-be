@@ -27,6 +27,9 @@ def _invalidate_caches(key):
     if key.startswith('GRAPH_'):
         from ...services import graph_mail
         graph_mail.reset_token_cache()
+    if key.startswith('AWS_'):
+        from ...services import secrets_manager
+        secrets_manager.reset_cache()
 
 
 def _describe(key, meta):
@@ -117,7 +120,7 @@ def settings_update_many():
 @admin_required
 def settings_status():
     """What each integration is actually doing, not just whether it is filled in."""
-    from ...services import chat_agent, graph_mail, ticket_intake
+    from ...services import chat_agent, graph_mail, secrets_manager, ticket_intake
 
     llm = {'configured': chat_agent.is_enabled(), 'model': chat_agent.model_name()}
 
@@ -134,7 +137,18 @@ def settings_status():
             # failure this endpoint exists to surface.
             mail['error'] = str(exc)[:300]
 
-    return jsonify({'llm': llm, 'mail': mail})
+    aws = {'configured': secrets_manager.is_enabled(),
+           'reachable': False, 'region': None, 'secret_count': None, 'error': None}
+    if aws['configured']:
+        try:
+            result = secrets_manager.check_connection()
+            aws['reachable'] = True
+            aws['region'] = result.get('region')
+            aws['secret_count'] = result.get('secret_count')
+        except Exception as exc:
+            aws['error'] = str(exc)[:300]
+
+    return jsonify({'llm': llm, 'mail': mail, 'aws': aws})
 
 
 @api_bp.route('/admin/settings/llm/models')

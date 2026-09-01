@@ -60,6 +60,71 @@ class AWSManager(CloudManager):
         """AWS doesn't have resource groups — return current region as a single entry."""
         return [{'name': self.region, 'location': self.region}]
 
+    # --- Secrets Manager --------------------------------------------------
+    # Used by the central AWS secrets manager, not by start/stop. Secrets
+    # Manager is regional; both calls run against the given region (or the
+    # manager's default). Errors surface so the endpoint can report a
+    # credential/permission problem to the admin.
+
+    def list_all_secrets(self, region=None) -> list:
+        """Every secret in the account/region, metadata only (no values).
+
+        Returns ``[{'name', 'arn', 'description'}, ...]``.
+        """
+        client = self._get_client('secretsmanager', region)
+        results = []
+        paginator = client.get_paginator('list_secrets')
+        for page in paginator.paginate():
+            for sec in page.get('SecretList', []):
+                results.append({
+                    'name': sec.get('Name', ''),
+                    'arn': sec.get('ARN', ''),
+                    'description': sec.get('Description') or None,
+                })
+        return results
+
+    def get_secret_string(self, secret_id: str, region=None) -> str:
+        """The current plaintext value of one secret (its ``SecretString``).
+
+        ``secret_id`` may be a name or a full ARN; pass the ARN's region so the
+        regional client matches. Binary-only secrets come back as ''.
+        """
+        client = self._get_client('secretsmanager', region)
+        response = client.get_secret_value(SecretId=secret_id)
+        return response.get('SecretString') or ''
+
+    def describe_secret(self, secret_id: str, region=None) -> dict:
+        """Metadata for one secret (no value). Returns
+        ``{'name', 'arn', 'description', 'last_changed'}``."""
+        client = self._get_client('secretsmanager', region)
+        resp = client.describe_secret(SecretId=secret_id)
+        changed = resp.get('LastChangedDate')
+        return {
+            'name': resp.get('Name', ''),
+            'arn': resp.get('ARN', ''),
+            'description': resp.get('Description') or None,
+            'last_changed': changed.isoformat() if changed else None,
+        }
+
+    def create_secret(self, name: str, value: str, description=None, region=None) -> dict:
+        """Create a new secret. Returns ``{'name', 'arn'}``."""
+        client = self._get_client('secretsmanager', region)
+        kwargs = {'Name': name, 'SecretString': value}
+        if description:
+            kwargs['Description'] = description
+        resp = client.create_secret(**kwargs)
+        return {'name': resp.get('Name', name), 'arn': resp.get('ARN', '')}
+
+    def put_secret_value(self, secret_id: str, value: str, region=None) -> None:
+        """Store a new value on an existing secret (creates a new version)."""
+        client = self._get_client('secretsmanager', region)
+        client.put_secret_value(SecretId=secret_id, SecretString=value)
+
+    def update_secret_description(self, secret_id: str, description: str, region=None) -> None:
+        """Change a secret's description without touching its value."""
+        client = self._get_client('secretsmanager', region)
+        client.update_secret(SecretId=secret_id, Description=description or '')
+
     def list_resources(self, service_type: str, resource_group: str = None,
                        region: str = None) -> list:
         dispatch = {

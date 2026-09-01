@@ -30,6 +30,8 @@ class Setting(db.Model):
                 'blurb': 'Chat assistant and ticket summaries.'},
         'mail': {'label': 'Email intake',
                  'blurb': 'Turn mail sent to the team address into tickets.'},
+        'aws': {'label': 'AWS Secrets Manager',
+                'blurb': 'Central credentials used to list and read secrets across projects.'},
     }
 
     # Only keys listed here can be written through the API. An open key/value
@@ -55,10 +57,21 @@ class Setting(db.Model):
             'label': 'Trigger address', 'secret': False,
             'help': 'A ticket is created only when this appears in the email '
                     'body. Blank uses the mailbox address.'},
-        'TICKET_ACK_ENABLED': {'group': 'mail', 
+        'TICKET_ACK_ENABLED': {'group': 'mail',
             'label': 'Acknowledge senders', 'secret': False,
             'help': 'Set to 1 to email the sender a ticket reference. This mails '
                     'real people as your team — leave at 0 until the queue looks right.'},
+        'AWS_ACCESS_KEY_ID': {'group': 'aws',
+            'label': 'AWS access key ID', 'secret': False,
+            'help': 'IAM user/role key with secretsmanager:ListSecrets and '
+                    'GetSecretValue.'},
+        'AWS_SECRET_ACCESS_KEY': {'group': 'aws',
+            'label': 'AWS secret access key', 'secret': True,
+            'help': 'The secret value paired with the access key ID above.'},
+        'AWS_REGION': {'group': 'aws',
+            'label': 'Default region', 'secret': False,
+            'help': 'Default region for listing secrets; Secrets Manager is '
+                    'regional. Defaults to us-east-1.'},
     }
 
     id = db.Column(db.Integer, primary_key=True)

@@ -4,9 +4,10 @@ Cookie/session auth via Flask-Login — not bearer tokens. The SPA sends
 ``credentials: 'include'`` on every call and echoes the CSRF token from
 ``/auth/csrf`` in an ``X-CSRFToken`` header on anything mutating.
 """
+import time
 from datetime import datetime
 
-from flask import jsonify, request
+from flask import jsonify, request, session
 from flask_login import login_user, logout_user, login_required, current_user
 from flask_wtf.csrf import generate_csrf
 
@@ -15,6 +16,40 @@ from ...models.user import User
 from ...models.audit import AuditLog
 from . import api_bp
 from .serializers import user_dict
+
+# A password-verified login is parked here (server session) until the TOTP step
+# finishes. No Flask-Login session exists until then. Short-lived on purpose.
+_MFA_PENDING_TTL = 300  # seconds
+
+
+def _set_pending(user, stage):
+    session['mfa_pending'] = {'uid': user.id, 'stage': stage, 'ts': time.time()}
+
+
+def _get_pending(stage=None):
+    """Return the pending user if the parked login is valid (and matches
+    ``stage`` when given), else None. Expired pending state is cleared."""
+    pending = session.get('mfa_pending')
+    if not pending:
+        return None
+    if time.time() - pending.get('ts', 0) > _MFA_PENDING_TTL:
+        session.pop('mfa_pending', None)
+        return None
+    if stage is not None and pending.get('stage') != stage:
+        return None
+    user = db.session.get(User, pending.get('uid'))
+    if user is None or not user.is_active:
+        session.pop('mfa_pending', None)
+        return None
+    return user
+
+
+def _finish_login(user, remember=False):
+    session.pop('mfa_pending', None)
+    login_user(user, remember=remember)
+    AuditLog.log('user_login', 'user', user.id,
+                 user_id=user.id, ip_address=request.remote_addr)
+    return jsonify({'user': user_dict(user)})
 
 
 @api_bp.route('/health')
@@ -70,10 +105,71 @@ def auth_login():
     if not user or not user.check_password(password) or not user.is_active:
         return jsonify({'error': 'Invalid username or password.'}), 401
 
-    login_user(user, remember=remember)
-    AuditLog.log('user_login', 'user', user.id,
+    # MFA is mandatory: the password check parks the login, and the second step
+    # (verify an existing code, or enroll one first) actually logs the user in.
+    if user.mfa_enabled:
+        _set_pending(user, 'verify')
+        return jsonify({'mfa_required': True})
+    _set_pending(user, 'setup')
+    return jsonify({'mfa_setup_required': True})
+
+
+@api_bp.route('/auth/login/verify', methods=['POST'])
+@limiter.limit('10/minute;50/hour')
+def auth_login_verify():
+    """Second login step for an enrolled user: check the authenticator code."""
+    user = _get_pending('verify')
+    if user is None:
+        return jsonify({'error': 'Your login session expired. Start again.'}), 401
+    code = (request.get_json(silent=True) or {}).get('code') or ''
+    if not user.verify_totp(code):
+        return jsonify({'error': 'That code is not valid. Try again.'}), 401
+    return _finish_login(user)
+
+
+@api_bp.route('/auth/mfa/setup', methods=['POST'])
+@limiter.limit('10/minute;50/hour')
+def auth_mfa_setup():
+    """First-login enrollment: mint a secret and return a QR to scan.
+
+    Reachable only with a password-verified pending session — an un-enrolled
+    user is not logged in yet."""
+    import pyotp
+    import qrcode
+    import qrcode.image.svg
+
+    user = _get_pending('setup')
+    if user is None:
+        return jsonify({'error': 'Your login session expired. Start again.'}), 401
+
+    secret = pyotp.random_base32()
+    user.set_totp_secret(secret)          # stored, but mfa_enabled stays False
+    db.session.commit()
+
+    uri = pyotp.TOTP(secret).provisioning_uri(name=user.email, issuer_name='DevOps Portal')
+    img = qrcode.make(uri, image_factory=qrcode.image.svg.SvgPathImage)
+    import io
+    buf = io.BytesIO()
+    img.save(buf)
+    qr_svg = buf.getvalue().decode('utf-8')
+    return jsonify({'secret': secret, 'otpauth_uri': uri, 'qr_svg': qr_svg})
+
+
+@api_bp.route('/auth/mfa/confirm', methods=['POST'])
+@limiter.limit('10/minute;50/hour')
+def auth_mfa_confirm():
+    """Finish enrollment: the user proves they scanned the QR, then we log in."""
+    user = _get_pending('setup')
+    if user is None:
+        return jsonify({'error': 'Your login session expired. Start again.'}), 401
+    code = (request.get_json(silent=True) or {}).get('code') or ''
+    if not user.verify_totp(code):
+        return jsonify({'error': 'That code is not valid. Try again.'}), 401
+    user.mfa_enabled = True
+    db.session.commit()
+    AuditLog.log('mfa_enrolled', 'user', user.id,
                  user_id=user.id, ip_address=request.remote_addr)
-    return jsonify({'user': user_dict(user)})
+    return _finish_login(user)
 
 
 @api_bp.route('/auth/logout', methods=['POST'])
