@@ -74,6 +74,28 @@ def ensure_member_columns():
     print('  schema: project_members project_role ensured')
 
 
+# Added to project_secrets when AWS Secrets Manager sync shipped. Same reasoning
+# as the patches above: no Alembic history, so patch the live schema
+# idempotently. Postgres only.
+_SECRET_COLUMN_DDL = [
+    "ALTER TABLE project_secrets ADD COLUMN IF NOT EXISTS "
+    "source VARCHAR(20) NOT NULL DEFAULT 'manual'",
+    "ALTER TABLE project_secrets ADD COLUMN IF NOT EXISTS external_id VARCHAR(255)",
+    "ALTER TABLE project_secrets ADD COLUMN IF NOT EXISTS synced_at TIMESTAMP",
+]
+
+
+def ensure_secret_columns():
+    """Idempotently add the sync columns to an existing table (Postgres)."""
+    if db.engine.dialect.name != 'postgresql':
+        print('  schema: non-postgres, create_all() owns the schema — skipping patch')
+        return
+    with db.engine.begin() as conn:
+        for stmt in _SECRET_COLUMN_DDL:
+            conn.execute(text(stmt))
+    print('  schema: project_secrets sync columns ensured')
+
+
 def backfill_project_devops():
     """Give every existing global-devops user project-devops on every project.
 
@@ -177,6 +199,7 @@ def main():
         print('==> Seeding')
         ensure_request_columns()
         ensure_member_columns()
+        ensure_secret_columns()
         seed_roles()
         seed_admin(app)
         if '--demo' in sys.argv:

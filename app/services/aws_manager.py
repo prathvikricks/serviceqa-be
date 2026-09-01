@@ -60,6 +60,41 @@ class AWSManager(CloudManager):
         """AWS doesn't have resource groups — return current region as a single entry."""
         return [{'name': self.region, 'location': self.region}]
 
+    # --- Secrets Manager --------------------------------------------------
+    # Used by the project-secrets sync, not by start/stop. Secrets Manager is
+    # regional, so both calls run against the project's default region.
+
+    def list_secrets_by_tag(self, tag_key: str, tag_value: str, region=None) -> list:
+        """Secrets carrying tag ``tag_key=tag_value``, metadata only (no values).
+
+        Returns ``[{'name', 'arn', 'description'}, ...]``. Errors surface so the
+        endpoint can report a credential/permission problem to the admin.
+        """
+        client = self._get_client('secretsmanager', region)
+        results = []
+        paginator = client.get_paginator('list_secrets')
+        page_iter = paginator.paginate(Filters=[
+            {'Key': 'tag-key', 'Values': [tag_key]},
+            {'Key': 'tag-value', 'Values': [tag_value]},
+        ])
+        for page in page_iter:
+            for sec in page.get('SecretList', []):
+                results.append({
+                    'name': sec.get('Name', ''),
+                    'arn': sec.get('ARN', ''),
+                    'description': sec.get('Description') or None,
+                })
+        return results
+
+    def get_secret_string(self, secret_id: str, region=None) -> str:
+        """The current plaintext value of one secret (its ``SecretString``).
+
+        Binary-only secrets have no SecretString; those come back as ''.
+        """
+        client = self._get_client('secretsmanager', region)
+        response = client.get_secret_value(SecretId=secret_id)
+        return response.get('SecretString') or ''
+
     def list_resources(self, service_type: str, resource_group: str = None,
                        region: str = None) -> list:
         dispatch = {

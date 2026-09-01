@@ -11,6 +11,7 @@ Nothing here ever puts a secret value into a log line or an audit ``details``
 blob. The only place plaintext leaves the process is the ``/reveal`` response.
 """
 import logging
+from datetime import datetime, timezone
 
 from flask import jsonify, request
 from flask_login import login_required, current_user
@@ -40,8 +41,20 @@ def secret_dict(secret, can_reveal=False):
         'created_by': secret.creator.username if secret.creator else None,
         'created_at': secret.created_at.isoformat() if secret.created_at else None,
         'updated_at': secret.updated_at.isoformat() if secret.updated_at else None,
+        'source': secret.source,
+        'synced_at': secret.synced_at.isoformat() if secret.synced_at else None,
         'can_reveal': can_reveal,
     }
+
+
+def _secret_key_from_name(name):
+    """A ProjectSecret key from an AWS secret name.
+
+    AWS names are often paths ("myapp/prod/db-password"); take the last segment
+    and cap it at the column's 100 chars. Returns '' when nothing usable is left.
+    """
+    seg = (name or '').rstrip('/').split('/')[-1].strip()
+    return seg[:100]
 
 
 def _resolve_environment(project, raw):
@@ -222,3 +235,108 @@ def delete_secret(pid, sid):
                  user_id=current_user.id, ip_address=request.remote_addr,
                  details={'key': key, 'project_id': pid})
     return jsonify({'deleted': True, 'id': sid})
+
+
+# ---------------------------------------------------------------------------
+# AWS Secrets Manager sync
+# ---------------------------------------------------------------------------
+
+# The tag AWS secrets must carry to be claimed by a project. Value = project.slug.
+SYNC_TAG_KEY = 'Project'
+
+
+@api_bp.route('/admin/projects/<int:pid>/secrets/sync', methods=['POST'])
+@login_required
+@admin_required
+def sync_secrets(pid):
+    """Pull AWS Secrets Manager secrets tagged ``Project=<slug>`` into this
+    project's secrets, using the project's own AWS credentials.
+
+    Upsert, never destructive: only rows this sync created (``source='aws'``)
+    are updated; a manually-created secret sharing a key is left alone and
+    reported as skipped. Secrets removed from AWS are counted, not deleted, so
+    an admin decides whether to remove them.
+    """
+    project = _get_or_404(Project, pid)
+    if project.cloud_provider != 'aws':
+        return jsonify({'error': 'Secret sync is only available for AWS projects.'}), 400
+    if (project.mode or 'mock') != 'real':
+        return jsonify({'error': 'Switch the project to Real mode with AWS '
+                                 'credentials before syncing.'}), 400
+
+    from ...services.aws_manager import AWSManager
+    manager = AWSManager(project.get_provider_config())
+
+    try:
+        entries = manager.list_secrets_by_tag(SYNC_TAG_KEY, project.slug)
+    except Exception as exc:  # boto/cred/permission failure — report, don't 500.
+        logger.warning('Secret sync list failed for project %s: %s', pid, exc)
+        return jsonify({'error': f'Could not read AWS Secrets Manager: {exc}'}), 502
+
+    created, updated, skipped, seen_arns = 0, 0, [], []
+    now = datetime.now(timezone.utc)
+
+    for entry in entries:
+        arn = entry['arn']
+        key = _secret_key_from_name(entry['name'])
+        if not key:
+            skipped.append({'key': entry['name'], 'reason': 'unusable secret name'})
+            continue
+
+        try:
+            value = manager.get_secret_string(arn)
+        except Exception as exc:
+            logger.warning('Secret sync fetch failed for %s: %s', arn, exc)
+            skipped.append({'key': key, 'reason': 'could not read value'})
+            continue
+
+        seen_arns.append(arn)
+        # Match project-wide (environment_id NULL) by key.
+        existing = ProjectSecret.query.filter_by(
+            project_id=pid, environment_id=None, key=key).first()
+
+        if existing is None:
+            secret = ProjectSecret(
+                project_id=pid, environment_id=None, key=key,
+                description=entry['description'] or 'Synced from AWS Secrets Manager',
+                source='aws', external_id=arn, synced_at=now,
+                created_by=current_user.id)
+            secret.set_value(value)
+            db.session.add(secret)
+            created += 1
+        elif existing.source == 'aws':
+            existing.set_value(value)
+            existing.external_id = arn
+            existing.synced_at = now
+            if entry['description']:
+                existing.description = entry['description']
+            updated += 1
+        else:
+            skipped.append({'key': key,
+                            'reason': 'a manually-created secret with this key exists'})
+
+    # AWS-sourced rows whose ARN wasn't seen this run no longer exist upstream.
+    stale_q = ProjectSecret.query.filter_by(project_id=pid, source='aws')
+    if seen_arns:
+        stale_q = stale_q.filter(
+            ProjectSecret.external_id.isnot(None),
+            ProjectSecret.external_id.notin_(seen_arns))
+    missing_in_aws = stale_q.count()
+
+    db.session.commit()
+
+    # Counts only — never a key's value.
+    AuditLog.log('secrets_synced', 'project', pid,
+                 user_id=current_user.id, ip_address=request.remote_addr,
+                 details={'project_id': pid, 'tag': f'{SYNC_TAG_KEY}={project.slug}',
+                          'created': created, 'updated': updated,
+                          'skipped': len(skipped), 'missing_in_aws': missing_in_aws})
+
+    return jsonify({
+        'created': created,
+        'updated': updated,
+        'skipped': skipped,
+        'missing_in_aws': missing_in_aws,
+        'tag': f'{SYNC_TAG_KEY}={project.slug}',
+        'region': manager.region,
+    })

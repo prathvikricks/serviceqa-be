@@ -24,6 +24,13 @@ class ProjectSecret(db.Model):
     # Ciphertext. Never read this column directly — use get_value()/set_value().
     value = db.Column(db.Text, nullable=False)
     description = db.Column(db.Text, nullable=True)
+    # Where this secret came from: 'manual' (created/edited by an admin) or
+    # 'aws' (pulled from AWS Secrets Manager by the sync). Sync only ever
+    # touches its own 'aws' rows, so a manual secret sharing a key is never
+    # clobbered. external_id holds the AWS ARN for idempotent re-sync.
+    source = db.Column(db.String(20), nullable=False, default='manual')
+    external_id = db.Column(db.String(255), nullable=True)
+    synced_at = db.Column(db.DateTime, nullable=True)
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
