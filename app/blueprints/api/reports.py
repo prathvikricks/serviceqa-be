@@ -56,6 +56,15 @@ def admin_audit():
     })
 
 
+@api_bp.route('/admin/audit/<int:aid>')
+@login_required
+@admin_required
+def admin_audit_detail(aid):
+    """A single audit entry, with its full details blob — for the detail page."""
+    entry = _get_or_404(AuditLog, aid)
+    return jsonify(audit_log_dict(entry))
+
+
 @api_bp.route('/admin/projects/<int:pid>/costs')
 @login_required
 @admin_required
