@@ -637,3 +637,78 @@ def admin_user_reset_mfa(uid):
     AuditLog.log('mfa_reset', 'user', user.id,
                  user_id=current_user.id, ip_address=request.remote_addr)
     return jsonify(user_dict(user))
+
+
+@api_bp.route('/admin/users/<int:uid>', methods=['DELETE'])
+@login_required
+@admin_required
+def admin_user_delete(uid):
+    """Hard-delete a user — but only one with no activity to preserve.
+
+    Users own NOT-NULL rows (requests, approvals, projects, secrets) with no
+    cascade, so deleting an active user would either break integrity or wipe
+    shared data. We refuse those and tell the admin to deactivate instead; a
+    user with none of that is safe to remove after clearing incidental links.
+    """
+    from ...models.approval import Approval
+    from ...models.secret import ProjectSecret
+    from ...models.project_aws_secret import ProjectAwsSecret
+    from ...models.chat import ChatConversation
+    from ...models.setting import Setting
+    from ...models.ticket import Ticket, TicketComment
+    from ...models.vulnerability import Vulnerability
+
+    user = _get_or_404(User, uid)
+
+    if user.id == current_user.id:
+        return jsonify({'error': 'You cannot delete your own account.'}), 400
+
+    if user.is_admin:
+        admins = (User.query.join(Role)
+                  .filter(Role.name == 'admin', User.is_active.is_(True)).count())
+        if admins <= 1:
+            return jsonify({'error': 'This is the last active admin. Promote another '
+                                     'admin before deleting this one.'}), 400
+
+    # Ownership/history we will not silently destroy — block and point to deactivate.
+    reqs = EnvironmentRequest.query.filter_by(requester_id=uid).count()
+    approvals = Approval.query.filter_by(approver_id=uid).count()
+    projects = Project.query.filter_by(created_by=uid).count()
+    secrets = (ProjectSecret.query.filter_by(created_by=uid).count()
+               + ProjectAwsSecret.query.filter_by(created_by=uid).count())
+    if reqs or approvals or projects or secrets:
+        bits = []
+        if reqs:
+            bits.append(f'{reqs} request(s)')
+        if approvals:
+            bits.append(f'{approvals} approval(s)')
+        if projects:
+            bits.append(f'{projects} project(s)')
+        if secrets:
+            bits.append(f'{secrets} secret(s)')
+        return jsonify({'error': f'This user has activity ({", ".join(bits)}). '
+                                 f'Deactivate them instead of deleting.'}), 400
+
+    username = user.username
+
+    # Clear incidental links that would otherwise trip the NOT-NULL / FK checks.
+    ProjectMember.query.filter_by(user_id=uid).delete()
+    ProjectMember.query.filter_by(added_by=uid).update({'added_by': current_user.id})
+    # Conversations cascade to their messages — delete as ORM objects so the
+    # cascade fires (a bulk .delete() would leave orphaned messages).
+    for convo in ChatConversation.query.filter_by(user_id=uid).all():
+        db.session.delete(convo)
+    # Nullable back-references: keep the rows, drop the pointer to this user.
+    AuditLog.query.filter_by(user_id=uid).update({'user_id': None})
+    Setting.query.filter_by(updated_by=uid).update({'updated_by': None})
+    Ticket.query.filter_by(assignee_id=uid).update({'assignee_id': None})
+    Ticket.query.filter_by(requester_user_id=uid).update({'requester_user_id': None})
+    TicketComment.query.filter_by(author_id=uid).update({'author_id': None})
+    Vulnerability.query.filter_by(acknowledged_by=uid).update({'acknowledged_by': None})
+
+    db.session.delete(user)
+    db.session.commit()
+    AuditLog.log('user_deleted', 'user', uid,
+                 user_id=current_user.id, ip_address=request.remote_addr,
+                 details={'username': username})
+    return jsonify({'deleted': True, 'id': uid})
